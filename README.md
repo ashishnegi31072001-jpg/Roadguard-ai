@@ -1,24 +1,52 @@
 # RoadGuard AI
 
-An AI-driven road damage detection and severity analysis system.
+## AI-Driven Road Damage Detection and Severity Analysis System
 
-## Project Description
+RoadGuard AI is a full-stack AI application that detects road damage
+from images and videos and analyzes its severity.
 
-RoadGuard AI is a full-stack AI application designed to detect road
-damages such as potholes and cracks from road images and videos.
+## Main Features
 
-The system will also classify damage severity and provide road
-condition analytics and visualization.
+- Road damage detection
+- Pothole detection
+- Crack detection
+- Damage severity classification
+- Image and video processing
+- GPS-based damage mapping
+- Road condition analytics
+- Road health / priority scoring
+- Report generation
 
 ## Technology Stack
 
-- React + TypeScript
+### Frontend
+- React
+- TypeScript
 - Tailwind CSS
+- React Router
+- TanStack Query
+- Leaflet
+
+### Backend
 - Node.js
 - Express.js
 - MongoDB
+- Mongoose
+- JWT
+- bcrypt
+
+### AI Service
 - Python
 - FastAPI
 - YOLO
 - OpenCV
-- Leaflet
+- NumPy
+- Pandas
+
+## Project Structure
+
+```text
+frontend/     React application
+backend/      Node.js API
+ai-service/   Python AI service
+docs/         Documentation
