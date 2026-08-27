@@ -1,18 +1,20 @@
-import Sidebar from "./components/Sidebar";
-import Navbar from "./components/Navbar";
+import Sidebar from "./components/layout/Sidebar";
+import Topbar from "./components/layout/Topbar";
 import Dashboard from "./pages/Dashboard";
 
 function App() {
   return (
-    <div className="min-h-screen bg-slate-950">
+    <div className="min-h-screen bg-[var(--background)]">
 
+      {/* Desktop Sidebar */}
       <Sidebar />
 
-      <div className="ml-64">
+      {/* Main Application */}
+      <div className="lg:ml-[250px]">
 
-        <Navbar />
+        <Topbar />
 
-        <main className="min-h-[calc(100vh-5rem)] bg-slate-950 p-8">
+        <main className="p-5 lg:p-7">
           <Dashboard />
         </main>
 
