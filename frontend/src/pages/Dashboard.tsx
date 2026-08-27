@@ -1,19 +1,20 @@
 import HeroInspection from "../components/dashboard/HeroInspection";
 import LiveDetectionFeed from "../components/dashboard/LiveDetectionFeed";
 import StatCard from "../components/dashboard/StatCard";
-
+import DamageAnalytics from "../components/dashboard/DamageAnalytics";
+import DamageTrend from "../components/dashboard/DamageTrend";
+import RoadHealthMap from "../components/dashboard/RoadHealthMap";
+import RecentInspections from "../components/dashboard/RecentInspections";
+import PriorityRoads from "../components/dashboard/PriorityRoads";
 function Dashboard() {
   return (
     <div className="space-y-6">
 
-      {/* HERO + LIVE FEED */}
+      {/* HERO */}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-
         <HeroInspection />
-
         <LiveDetectionFeed />
-
       </div>
 
       {/* STATISTICS */}
@@ -51,35 +52,26 @@ function Dashboard() {
 
       </section>
 
-      {/* NEXT MODULES */}
+      {/* ANALYTICS */}
 
       <div className="grid gap-5 xl:grid-cols-2">
 
-        <div className="flex min-h-[300px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
-          <div className="text-center">
-            <p className="text-sm font-semibold text-[var(--text)]">
-              Damage Analytics
-            </p>
+        <DamageAnalytics />
 
-            <p className="mt-1 text-xs text-[var(--muted)]">
-              Coming in the next step
-            </p>
-          </div>
-        </div>
-
-        <div className="flex min-h-[300px] items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
-          <div className="text-center">
-            <p className="text-sm font-semibold text-[var(--text)]">
-              Road Health Map
-            </p>
-
-            <p className="mt-1 text-xs text-[var(--muted)]">
-              Coming in the next step
-            </p>
-          </div>
-        </div>
+        <DamageTrend />
 
       </div>
+
+      {/* ROAD HEALTH MAP */}
+
+      <RoadHealthMap />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+
+  <RecentInspections />
+
+  <PriorityRoads />
+
+</div>
 
     </div>
   );
