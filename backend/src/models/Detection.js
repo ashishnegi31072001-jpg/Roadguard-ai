@@ -26,17 +26,27 @@ const detectionSchema = new mongoose.Schema(
       required: true,
     },
 
-    location: {
-      road: {
-        type: String,
-        default: "Unknown Road",
-      },
+   location: {
+  road: {
+    type: String,
+    default: "Unknown Road",
+  },
 
-      area: {
-        type: String,
-        default: "Unknown Area",
-      },
-    },
+  area: {
+    type: String,
+    default: "Unknown Area",
+  },
+
+  latitude: {
+    type: Number,
+    default: null,
+  },
+
+  longitude: {
+    type: Number,
+    default: null,
+  },
+},
 
     aiModel: {
       type: String,

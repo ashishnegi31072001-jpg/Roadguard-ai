@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Target,
   Activity,
+  MapPin,
 } from "lucide-react";
 
 /*
@@ -48,6 +49,8 @@ interface DetectionResult {
   location?: {
     road?: string;
     area?: string;
+    latitude?: number;
+    longitude?: number;
   };
 
   imageUrl: string;
@@ -57,6 +60,17 @@ interface DetectionResult {
 
   status: string;
   description: string;
+}
+
+/*
+|--------------------------------------------------------------------------
+| GPS Location Type
+|--------------------------------------------------------------------------
+*/
+
+interface GPSLocation {
+  latitude: number;
+  longitude: number;
 }
 
 /*
@@ -72,9 +86,11 @@ function AnalyzeRoad() {
   |--------------------------------------------------------------------------
   */
 
-  const [file, setFile] = useState<File | null>(null);
+  const [file, setFile] =
+    useState<File | null>(null);
 
-  const [preview, setPreview] = useState<string>("");
+  const [preview, setPreview] =
+    useState<string>("");
 
   /*
   |--------------------------------------------------------------------------
@@ -110,9 +126,6 @@ function AnalyzeRoad() {
   |--------------------------------------------------------------------------
   | Image Dimensions
   |--------------------------------------------------------------------------
-  |
-  | We get the REAL image dimensions from the browser.
-  |
   */
 
   const [imageDimensions, setImageDimensions] =
@@ -121,6 +134,79 @@ function AnalyzeRoad() {
       height: 1,
     });
 
+  /*
+  |--------------------------------------------------------------------------
+  | GPS Location
+  |--------------------------------------------------------------------------
+  */
+
+  const [gpsLocation, setGpsLocation] =
+    useState<GPSLocation | null>(null);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Get Current Location
+  |--------------------------------------------------------------------------
+  */
+
+ const getCurrentLocation = (): Promise<GPSLocation> => {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(
+        new Error(
+          "GPS is not supported by this browser."
+        )
+      );
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const location: GPSLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        };
+
+        console.log("📍 GPS Location:", location);
+
+        setGpsLocation(location);
+
+        resolve(location);
+      },
+
+      (error) => {
+        console.error("❌ GPS Error:", error);
+
+        let message = "Unable to get GPS location.";
+
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            message =
+              "GPS permission denied. Please allow location access in your browser.";
+            break;
+
+          case error.POSITION_UNAVAILABLE:
+            message =
+              "GPS position is currently unavailable.";
+            break;
+
+          case error.TIMEOUT:
+            message =
+              "GPS request timed out. Please try again.";
+            break;
+        }
+
+        reject(new Error(message));
+      },
+
+      {
+        enableHighAccuracy: true,
+        timeout: 20000,
+        maximumAge: 0,
+      }
+    );
+  });
+};
   /*
   |--------------------------------------------------------------------------
   | File Selection
@@ -162,6 +248,7 @@ function AnalyzeRoad() {
       setPreview("");
       setResult(null);
       setAIResult(null);
+      setGpsLocation(null);
 
       return;
     }
@@ -184,6 +271,7 @@ function AnalyzeRoad() {
       setPreview("");
       setResult(null);
       setAIResult(null);
+      setGpsLocation(null);
 
       return;
     }
@@ -201,6 +289,8 @@ function AnalyzeRoad() {
     setResult(null);
 
     setAIResult(null);
+
+    setGpsLocation(null);
 
     /*
     |--------------------------------------------------------------------------
@@ -223,7 +313,10 @@ function AnalyzeRoad() {
   */
 
   const handleAnalyze = async () => {
-    console.log("🔥 ANALYZE BUTTON CLICKED");
+    console.log(
+      "🔥 ANALYZE BUTTON CLICKED"
+    );
+
     if (!file) {
       setMessage(
         "Please select an image first."
@@ -243,7 +336,44 @@ function AnalyzeRoad() {
 
       /*
       |--------------------------------------------------------------------------
-      | STEP 1: Upload Image
+      | STEP 1: Get GPS Location
+      |--------------------------------------------------------------------------
+      */
+
+      let location:
+        | GPSLocation
+        | null = null;
+
+      try {
+        setMessage(
+          "Getting your location..."
+        );
+
+        location =
+          await getCurrentLocation();
+
+        console.log(
+          "✅ Location received:",
+          location
+        );
+     } catch (locationError) {
+  console.warn(
+    "⚠️ Could not get GPS location:",
+    locationError
+  );
+
+  setGpsLocation(null);
+
+  setMessage(
+    locationError instanceof Error
+      ? `${locationError.message} Continuing AI analysis...`
+      : "GPS unavailable. Continuing AI analysis..."
+  );
+}
+
+      /*
+      |--------------------------------------------------------------------------
+      | STEP 2: Upload Image
       |--------------------------------------------------------------------------
       */
 
@@ -256,7 +386,7 @@ function AnalyzeRoad() {
       );
 
       console.log(
-        "Uploading image..."
+        "📤 Uploading image..."
       );
 
       const uploadResponse =
@@ -288,46 +418,43 @@ function AnalyzeRoad() {
 
       /*
       |--------------------------------------------------------------------------
-      | STEP 2: Get Image URL
+      | STEP 3: Get Image URL
       |--------------------------------------------------------------------------
       */
 
-     const imageUrl =
-  uploadData.file?.url ||
-  uploadData.file?.imageUrl ||
-  uploadData.imageUrl ||
-  uploadData.url ||
-  uploadData.fileUrl;
+      const imageUrl =
+        uploadData.file?.url ||
+        uploadData.file?.imageUrl ||
+        uploadData.imageUrl ||
+        uploadData.url ||
+        uploadData.fileUrl;
 
-if (!imageUrl) {
-  console.error(
-    "❌ Upload response structure:",
-    uploadData
-  );
+      if (!imageUrl) {
+        console.error(
+          "❌ Upload response structure:",
+          uploadData
+        );
 
-  throw new Error(
-    "Upload succeeded but image URL was not returned."
-  );
-}
-
-console.log(
-  "✅ Final image URL:",
-  imageUrl
-);
+        throw new Error(
+          "Upload succeeded but image URL was not returned."
+        );
+      }
 
       console.log(
-        "Uploaded image:",
+        "✅ Final image URL:",
         imageUrl
       );
 
       /*
       |--------------------------------------------------------------------------
-      | STEP 3: Analyze Image
+      | STEP 4: Analyze Image
       |--------------------------------------------------------------------------
       */
 
       setMessage(
-        "Image uploaded. AI analysis started..."
+        location
+          ? "Image uploaded. GPS location captured. AI analysis started..."
+          : "Image uploaded. AI analysis started..."
       );
 
       const detectionResponse =
@@ -343,6 +470,14 @@ console.log(
 
             body: JSON.stringify({
               imageUrl,
+
+              latitude:
+                location?.latitude ??
+                null,
+
+              longitude:
+                location?.longitude ??
+                null,
             }),
           }
         );
@@ -367,7 +502,7 @@ console.log(
 
       /*
       |--------------------------------------------------------------------------
-      | STEP 4: Store MongoDB Result
+      | STEP 5: Store MongoDB Result
       |--------------------------------------------------------------------------
       */
 
@@ -377,7 +512,7 @@ console.log(
 
       /*
       |--------------------------------------------------------------------------
-      | STEP 5: Store ALL AI Detections
+      | STEP 6: Store ALL AI Detections
       |--------------------------------------------------------------------------
       */
 
@@ -387,7 +522,8 @@ console.log(
             detectionData.ai.count || 0,
 
           detections:
-            detectionData.ai.detections || [],
+            detectionData.ai.detections ||
+            [],
         });
       }
 
@@ -398,7 +534,9 @@ console.log(
       */
 
       setMessage(
-        "Road analysis completed successfully!"
+        location
+          ? "Road analysis completed successfully with GPS location!"
+          : "Road analysis completed successfully!"
       );
     } catch (error) {
       console.error(
@@ -432,6 +570,8 @@ console.log(
     setResult(null);
 
     setAIResult(null);
+
+    setGpsLocation(null);
 
     setImageDimensions({
       width: 1,
@@ -496,9 +636,9 @@ console.log(
         </h1>
 
         <p className="mt-2 text-sm text-slate-400">
-          Upload a road image or video and
-          RoadGuard AI will analyze it for
-          potholes, cracks, and other road damage.
+          Upload a road image and RoadGuard AI
+          will analyze it for potholes, cracks,
+          and other road damage.
         </p>
 
       </div>
@@ -508,8 +648,6 @@ console.log(
       {/* ================================================================ */}
 
       <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-
-        {/* Header */}
 
         <div className="border-b border-slate-800 px-5 py-5">
 
@@ -623,6 +761,45 @@ console.log(
           </label>
 
           {/* ============================================================ */}
+          {/* GPS STATUS */}
+          {/* ============================================================ */}
+
+          {gpsLocation && (
+
+            <div
+              className="
+                mt-4
+                flex items-center gap-3
+                rounded-xl
+                border border-emerald-500/20
+                bg-emerald-500/5
+                px-4 py-3
+              "
+            >
+
+              <MapPin className="h-5 w-5 text-emerald-400" />
+
+              <div>
+
+                <p className="text-xs font-semibold text-emerald-400">
+                  GPS Location Captured
+                </p>
+
+                <p className="mt-1 text-[10px] text-slate-500">
+                  Lat:{" "}
+                  {gpsLocation.latitude.toFixed(6)}
+                  {" • "}
+                  Lng:{" "}
+                  {gpsLocation.longitude.toFixed(6)}
+                </p>
+
+              </div>
+
+            </div>
+
+          )}
+
+          {/* ============================================================ */}
           {/* SELECTED FILE */}
           {/* ============================================================ */}
 
@@ -631,11 +808,14 @@ console.log(
             <div
               className="
                 mt-4 flex
-                items-center justify-between
+                flex-col gap-4
                 rounded-xl
                 border border-slate-800
                 bg-slate-900
                 px-4 py-3
+                sm:flex-row
+                sm:items-center
+                sm:justify-between
               "
             >
 
@@ -824,9 +1004,7 @@ console.log(
 
           <div className="grid gap-5 p-5 lg:grid-cols-2">
 
-            {/* ========================================================== */}
-            {/* IMAGE + BOUNDING BOXES */}
-            {/* ========================================================== */}
+            {/* IMAGE */}
 
             <div>
 
@@ -859,9 +1037,7 @@ console.log(
                   }}
                 />
 
-                {/* ====================================================== */}
-                {/* YOLO BOUNDING BOXES */}
-                {/* ====================================================== */}
+                {/* YOLO BOXES */}
 
                 {aiResult?.detections?.map(
                   (
@@ -919,8 +1095,6 @@ console.log(
                         }}
                       >
 
-                        {/* Label */}
-
                         <div
                           className="
                             absolute
@@ -951,9 +1125,7 @@ console.log(
 
               </div>
 
-              {/* ======================================================== */}
-              {/* DETECTION COUNT */}
-              {/* ======================================================== */}
+              {/* Detection Count */}
 
               {aiResult && (
 
@@ -986,9 +1158,7 @@ console.log(
 
             </div>
 
-            {/* ========================================================== */}
-            {/* DETECTION INFORMATION */}
-            {/* ========================================================== */}
+            {/* INFORMATION */}
 
             <div className="space-y-4">
 
@@ -1011,7 +1181,7 @@ console.log(
 
                   <Activity className="h-5 w-5 text-emerald-400" />
 
-                  <p className="text-xl font-bold text-white">
+                  <p className="text-xl font-bold capitalize text-white">
                     {result.damageType}
                   </p>
 
@@ -1088,14 +1258,70 @@ console.log(
                       transition-all
                     "
                     style={{
-                      width: `${
+                      width: `${Math.min(
                         result.confidence *
+                          100,
                         100
-                      }%`,
+                      )}%`,
                     }}
                   />
 
                 </div>
+
+              </div>
+
+              {/* GPS */}
+
+              <div
+                className="
+                  rounded-xl
+                  border border-slate-800
+                  bg-slate-900
+                  p-4
+                "
+              >
+
+                <div className="flex items-center gap-2">
+
+                  <MapPin className="h-4 w-4 text-emerald-400" />
+
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                    Detection Location
+                  </p>
+
+                </div>
+
+                {gpsLocation ? (
+
+                  <div className="mt-3 space-y-1">
+
+                    <p className="text-xs text-slate-300">
+                      Latitude:{" "}
+                      <span className="font-semibold text-white">
+                        {gpsLocation.latitude.toFixed(
+                          6
+                        )}
+                      </span>
+                    </p>
+
+                    <p className="text-xs text-slate-300">
+                      Longitude:{" "}
+                      <span className="font-semibold text-white">
+                        {gpsLocation.longitude.toFixed(
+                          6
+                        )}
+                      </span>
+                    </p>
+
+                  </div>
+
+                ) : (
+
+                  <p className="mt-2 text-xs text-slate-500">
+                    GPS location unavailable
+                  </p>
+
+                )}
 
               </div>
 
@@ -1151,7 +1377,7 @@ console.log(
           </div>
 
           {/* ============================================================ */}
-          {/* ALL DETECTIONS LIST */}
+          {/* ALL DETECTIONS */}
           {/* ============================================================ */}
 
           {aiResult &&
@@ -1181,7 +1407,8 @@ console.log(
                   </div>
 
                   <span className="rounded-lg bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
-                    {aiResult.detections.length} found
+                    {aiResult.detections.length}{" "}
+                    found
                   </span>
 
                 </div>
@@ -1268,8 +1495,6 @@ console.log(
 
       <div className="grid gap-4 lg:grid-cols-3">
 
-        {/* STEP 1 */}
-
         <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
 
           <p className="text-xs text-slate-500">
@@ -1287,8 +1512,6 @@ console.log(
 
         </div>
 
-        {/* STEP 2 */}
-
         <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
 
           <p className="text-xs text-slate-500">
@@ -1305,8 +1528,6 @@ console.log(
           </p>
 
         </div>
-
-        {/* STEP 3 */}
 
         <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
 

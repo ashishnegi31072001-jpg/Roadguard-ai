@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const FormData = require("form-data");
+const mongoose = require("mongoose");
 
 const Detection = require("../models/Detection");
 
@@ -43,7 +44,9 @@ router.get("/", async (req, res) => {
 | Frontend sends:
 |
 | {
-|   imageUrl: "/uploads/example.jpg"
+|   imageUrl: "/uploads/example.jpg",
+|   latitude: 30.306697,
+|   longitude: 77.949907
 | }
 |
 | Backend:
@@ -51,19 +54,24 @@ router.get("/", async (req, res) => {
 | 1. Finds uploaded image
 | 2. Sends image to Python AI service
 | 3. Receives YOLO detections
-| 4. Saves result to MongoDB
-| 5. Sends result back to frontend
+| 4. Determines best detection
+| 5. Saves detection + GPS to MongoDB
+| 6. Returns result to frontend
 |
 |--------------------------------------------------------------------------
 */
 
 router.post("/analyze", async (req, res) => {
   try {
-    const { imageUrl } = req.body;
+    const {
+      imageUrl,
+      latitude,
+      longitude,
+    } = req.body;
 
     /*
     |--------------------------------------------------------------------------
-    | Validate image URL
+    | Validate Image URL
     |--------------------------------------------------------------------------
     */
 
@@ -76,7 +84,7 @@ router.post("/analyze", async (req, res) => {
 
     /*
     |--------------------------------------------------------------------------
-    | Find uploaded image
+    | Find Uploaded Image
     |--------------------------------------------------------------------------
     */
 
@@ -93,7 +101,7 @@ router.post("/analyze", async (req, res) => {
 
     /*
     |--------------------------------------------------------------------------
-    | Check image exists
+    | Check Image Exists
     |--------------------------------------------------------------------------
     */
 
@@ -226,7 +234,7 @@ router.post("/analyze", async (req, res) => {
       } else {
         /*
         |--------------------------------------------------------------------------
-        | Fallback Severity Logic
+        | Fallback Severity
         |--------------------------------------------------------------------------
         */
 
@@ -239,6 +247,26 @@ router.post("/analyze", async (req, res) => {
         }
       }
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Prepare GPS Location
+    |--------------------------------------------------------------------------
+    */
+
+    const parsedLatitude =
+      latitude !== null &&
+      latitude !== undefined &&
+      latitude !== ""
+        ? Number(latitude)
+        : null;
+
+    const parsedLongitude =
+      longitude !== null &&
+      longitude !== undefined &&
+      longitude !== ""
+        ? Number(longitude)
+        : null;
 
     /*
     |--------------------------------------------------------------------------
@@ -258,7 +286,18 @@ router.post("/analyze", async (req, res) => {
 
         location: {
           road: "Unknown Road",
+
           area: "Unknown Area",
+
+          latitude:
+            Number.isFinite(parsedLatitude)
+              ? parsedLatitude
+              : null,
+
+          longitude:
+            Number.isFinite(parsedLongitude)
+              ? parsedLongitude
+              : null,
         },
 
         aiModel: "YOLOv8",
@@ -350,8 +389,6 @@ router.post("/analyze", async (req, res) => {
 | DELETE ALL DETECTIONS
 |--------------------------------------------------------------------------
 |
-| Deletes all detection records from MongoDB.
-|
 | DELETE:
 | http://localhost:5000/api/detections
 |
@@ -390,16 +427,46 @@ router.delete("/", async (req, res) => {
 
 /*
 |--------------------------------------------------------------------------
-| GET SINGLE DETECTION
+| DELETE SINGLE DETECTION
+|--------------------------------------------------------------------------
+|
+| DELETE:
+| http://localhost:5000/api/detections/:id
+|
 |--------------------------------------------------------------------------
 */
 
-router.get("/:id", async (req, res) => {
+router.delete("/:id", async (req, res) => {
   try {
+    const { id } = req.params;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Validate MongoDB ID
+    |--------------------------------------------------------------------------
+    */
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid detection ID",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Find And Delete Detection
+    |--------------------------------------------------------------------------
+    */
+
     const detection =
-      await Detection.findById(
-        req.params.id
-      );
+      await Detection.findByIdAndDelete(id);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Detection Not Found
+    |--------------------------------------------------------------------------
+    */
 
     if (!detection) {
       return res.status(404).json({
@@ -407,6 +474,81 @@ router.get("/:id", async (req, res) => {
         message: "Detection not found",
       });
     }
+
+    console.log(
+      `Deleted detection: ${id}`
+    );
+
+    /*
+    |--------------------------------------------------------------------------
+    | Success
+    |--------------------------------------------------------------------------
+    */
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Detection deleted successfully",
+      detectionId: id,
+    });
+  } catch (error) {
+    console.error(
+      "Delete single detection error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to delete detection",
+    });
+  }
+});
+
+/*
+|--------------------------------------------------------------------------
+| GET SINGLE DETECTION
+|--------------------------------------------------------------------------
+*/
+
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    /*
+    |--------------------------------------------------------------------------
+    | Validate MongoDB ID
+    |--------------------------------------------------------------------------
+    */
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid detection ID",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Find Detection
+    |--------------------------------------------------------------------------
+    */
+
+    const detection =
+      await Detection.findById(id);
+
+    if (!detection) {
+      return res.status(404).json({
+        success: false,
+        message: "Detection not found",
+      });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Success
+    |--------------------------------------------------------------------------
+    */
 
     return res.status(200).json({
       success: true,
