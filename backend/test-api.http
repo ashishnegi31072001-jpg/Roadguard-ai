@@ -1,0 +1,39 @@
+### Create Road Detection
+
+POST http://localhost:5000/api/detections
+Content-Type: application/json
+
+{
+  "damageType": "Pothole",
+  "severity": "High",
+  "confidence": 0.94,
+  "mediaType": "Image",
+  "mediaUrl": "/uploads/test-pothole.jpg",
+  "location": {
+    "address": "NH-48, Sector 12",
+    "latitude": 28.6139,
+    "longitude": 77.2090
+  },
+  "aiModel": "YOLOv8 RoadGuard",
+  "modelVersion": "1.0.0",
+  "status": "Detected",
+  "description": "Large pothole detected on the road surface"
+}
+
+
+### Get All Detections
+
+GET http://localhost:5000/api/detections
+
+
+### Upload Road Image
+
+POST http://localhost:5000/api/uploads/image
+Content-Type: multipart/form-data; boundary=RoadGuardBoundary
+
+--RoadGuardBoundary
+Content-Disposition: form-data; name="image"; filename="road-test.jpg"
+Content-Type: image/jpeg
+
+< ./road-test.jpg
+--RoadGuardBoundary--

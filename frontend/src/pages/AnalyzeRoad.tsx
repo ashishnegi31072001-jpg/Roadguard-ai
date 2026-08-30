@@ -1,503 +1,714 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
-  AlertTriangle,
-  CheckCircle2,
-  CloudUpload,
-  FileImage,
-  FileVideo,
-  Loader2,
-  ScanLine,
-  ShieldCheck,
-  Trash2,
   Upload,
-  X,
+  Image as ImageIcon,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+  ShieldCheck,
+  Target,
+  Activity,
 } from "lucide-react";
 
+/*
+|--------------------------------------------------------------------------
+| Detection Type
+|--------------------------------------------------------------------------
+*/
+
+interface AIDetection {
+  class: string;
+  confidence: number;
+  severity?: string;
+  box: [number, number, number, number];
+}
+
+/*
+|--------------------------------------------------------------------------
+| AI Result Type
+|--------------------------------------------------------------------------
+*/
+
+interface AIResult {
+  count: number;
+  detections: AIDetection[];
+}
+
+/*
+|--------------------------------------------------------------------------
+| MongoDB Detection Result
+|--------------------------------------------------------------------------
+*/
+
+interface DetectionResult {
+  damageType: string;
+  severity: string;
+  confidence: number;
+
+  location?: {
+    road?: string;
+    area?: string;
+  };
+
+  imageUrl: string;
+
+  aiModel: string;
+  modelVersion: string;
+
+  status: string;
+  description: string;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Analyze Road Component
+|--------------------------------------------------------------------------
+*/
+
 function AnalyzeRoad() {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  /*
+  |--------------------------------------------------------------------------
+  | File State
+  |--------------------------------------------------------------------------
+  */
 
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisStarted, setAnalysisStarted] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
 
-  /* ============================================================
-     FILE HANDLING
-  ============================================================ */
+  const [preview, setPreview] = useState<string>("");
 
-  const handleFile = (file: File) => {
-    if (!file) return;
+  /*
+  |--------------------------------------------------------------------------
+  | Upload State
+  |--------------------------------------------------------------------------
+  */
+
+  const [uploading, setUploading] =
+    useState<boolean>(false);
+
+  const [message, setMessage] =
+    useState<string>("");
+
+  /*
+  |--------------------------------------------------------------------------
+  | Detection Result
+  |--------------------------------------------------------------------------
+  */
+
+  const [result, setResult] =
+    useState<DetectionResult | null>(null);
+
+  /*
+  |--------------------------------------------------------------------------
+  | AI Detection Result
+  |--------------------------------------------------------------------------
+  */
+
+  const [aiResult, setAIResult] =
+    useState<AIResult | null>(null);
+
+  /*
+  |--------------------------------------------------------------------------
+  | Image Dimensions
+  |--------------------------------------------------------------------------
+  |
+  | We get the REAL image dimensions from the browser.
+  |
+  */
+
+  const [imageDimensions, setImageDimensions] =
+    useState({
+      width: 1,
+      height: 1,
+    });
+
+  /*
+  |--------------------------------------------------------------------------
+  | File Selection
+  |--------------------------------------------------------------------------
+  */
+
+  const handleFileChange = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const selectedFile =
+      event.target.files?.[0];
+
+    if (!selectedFile) {
+      return;
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Validate File Type
+    |--------------------------------------------------------------------------
+    */
 
     const allowedTypes = [
       "image/jpeg",
       "image/png",
       "image/webp",
-      "video/mp4",
-      "video/webm",
-      "video/quicktime",
     ];
 
-    if (!allowedTypes.includes(file.type)) {
-      alert("Please upload JPG, PNG, WEBP, MP4 or WEBM files.");
+    if (
+      !allowedTypes.includes(
+        selectedFile.type
+      )
+    ) {
+      setMessage(
+        "Please select a JPG, PNG, or WEBP image."
+      );
+
+      setFile(null);
+      setPreview("");
+      setResult(null);
+      setAIResult(null);
+
       return;
     }
-
-    if (file.size > 100 * 1024 * 1024) {
-      alert("File size must be less than 100 MB.");
-      return;
-    }
-
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
-
-    const url = URL.createObjectURL(file);
-
-    setSelectedFile(file);
-    setPreviewUrl(url);
-    setAnalysisStarted(false);
-  };
-
-  const handleInputChange = (
-    event: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file = event.target.files?.[0];
-
-    if (file) {
-      handleFile(file);
-    }
-  };
-
-  /* ============================================================
-     DRAG & DROP
-  ============================================================ */
-
-  const handleDragOver = (
-    event: React.DragEvent<HTMLDivElement>
-  ) => {
-    event.preventDefault();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (
-    event: React.DragEvent<HTMLDivElement>
-  ) => {
-    event.preventDefault();
-    setIsDragging(false);
-  };
-
-  const handleDrop = (
-    event: React.DragEvent<HTMLDivElement>
-  ) => {
-    event.preventDefault();
-
-    setIsDragging(false);
-
-    const file = event.dataTransfer.files?.[0];
-
-    if (file) {
-      handleFile(file);
-    }
-  };
-
-  /* ============================================================
-     REMOVE FILE
-  ============================================================ */
-
-  const removeFile = () => {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
-
-    setSelectedFile(null);
-    setPreviewUrl(null);
-    setAnalysisStarted(false);
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-  };
-
-  /* ============================================================
-     ANALYZE
-  ============================================================ */
-
-  const startAnalysis = () => {
-    if (!selectedFile) return;
-
-    setIsAnalyzing(true);
 
     /*
-      Temporary frontend simulation.
-
-      Later this button will send the file to:
-
-      Python FastAPI
-            ↓
-      YOLOv8
-            ↓
-      Severity Model
-            ↓
-      Detection Results
+    |--------------------------------------------------------------------------
+    | Validate File Size
+    |--------------------------------------------------------------------------
     */
 
-    setTimeout(() => {
-      setIsAnalyzing(false);
-      setAnalysisStarted(true);
-    }, 2500);
-  };
+    const maxSize =
+      10 * 1024 * 1024;
 
-  /* ============================================================
-     HELPERS
-  ============================================================ */
+    if (selectedFile.size > maxSize) {
+      setMessage(
+        "Image size must be less than 10 MB."
+      );
 
-  const isVideo = selectedFile?.type.startsWith("video/");
+      setFile(null);
+      setPreview("");
+      setResult(null);
+      setAIResult(null);
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024 * 1024) {
-      return `${(bytes / 1024).toFixed(1)} KB`;
+      return;
     }
 
-    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    /*
+    |--------------------------------------------------------------------------
+    | Set File
+    |--------------------------------------------------------------------------
+    */
+
+    setFile(selectedFile);
+
+    setMessage("");
+
+    setResult(null);
+
+    setAIResult(null);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Create Preview
+    |--------------------------------------------------------------------------
+    */
+
+    const imageUrl =
+      URL.createObjectURL(
+        selectedFile
+      );
+
+    setPreview(imageUrl);
   };
 
+  /*
+  |--------------------------------------------------------------------------
+  | Analyze Image
+  |--------------------------------------------------------------------------
+  */
+
+  const handleAnalyze = async () => {
+    console.log("🔥 ANALYZE BUTTON CLICKED");
+    if (!file) {
+      setMessage(
+        "Please select an image first."
+      );
+
+      return;
+    }
+
+    try {
+      setUploading(true);
+
+      setMessage("");
+
+      setResult(null);
+
+      setAIResult(null);
+
+      /*
+      |--------------------------------------------------------------------------
+      | STEP 1: Upload Image
+      |--------------------------------------------------------------------------
+      */
+
+      const formData =
+        new FormData();
+
+      formData.append(
+        "image",
+        file
+      );
+
+      console.log(
+        "Uploading image..."
+      );
+
+      const uploadResponse =
+        await fetch(
+          "http://localhost:5000/api/uploads",
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+
+      const uploadData =
+        await uploadResponse.json();
+
+      console.log(
+        "Upload response:",
+        uploadData
+      );
+
+      if (
+        !uploadResponse.ok ||
+        !uploadData.success
+      ) {
+        throw new Error(
+          uploadData.message ||
+            "Image upload failed."
+        );
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | STEP 2: Get Image URL
+      |--------------------------------------------------------------------------
+      */
+
+     const imageUrl =
+  uploadData.file?.url ||
+  uploadData.file?.imageUrl ||
+  uploadData.imageUrl ||
+  uploadData.url ||
+  uploadData.fileUrl;
+
+if (!imageUrl) {
+  console.error(
+    "❌ Upload response structure:",
+    uploadData
+  );
+
+  throw new Error(
+    "Upload succeeded but image URL was not returned."
+  );
+}
+
+console.log(
+  "✅ Final image URL:",
+  imageUrl
+);
+
+      console.log(
+        "Uploaded image:",
+        imageUrl
+      );
+
+      /*
+      |--------------------------------------------------------------------------
+      | STEP 3: Analyze Image
+      |--------------------------------------------------------------------------
+      */
+
+      setMessage(
+        "Image uploaded. AI analysis started..."
+      );
+
+      const detectionResponse =
+        await fetch(
+          "http://localhost:5000/api/detections/analyze",
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body: JSON.stringify({
+              imageUrl,
+            }),
+          }
+        );
+
+      const detectionData =
+        await detectionResponse.json();
+
+      console.log(
+        "Detection response:",
+        detectionData
+      );
+
+      if (
+        !detectionResponse.ok ||
+        !detectionData.success
+      ) {
+        throw new Error(
+          detectionData.message ||
+            "Road analysis failed."
+        );
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | STEP 4: Store MongoDB Result
+      |--------------------------------------------------------------------------
+      */
+
+      setResult(
+        detectionData.detection
+      );
+
+      /*
+      |--------------------------------------------------------------------------
+      | STEP 5: Store ALL AI Detections
+      |--------------------------------------------------------------------------
+      */
+
+      if (detectionData.ai) {
+        setAIResult({
+          count:
+            detectionData.ai.count || 0,
+
+          detections:
+            detectionData.ai.detections || [],
+        });
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | SUCCESS
+      |--------------------------------------------------------------------------
+      */
+
+      setMessage(
+        "Road analysis completed successfully!"
+      );
+    } catch (error) {
+      console.error(
+        "❌ Analysis error:",
+        error
+      );
+
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong."
+      );
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Reset
+  |--------------------------------------------------------------------------
+  */
+
+  const handleReset = () => {
+    setFile(null);
+
+    setPreview("");
+
+    setMessage("");
+
+    setResult(null);
+
+    setAIResult(null);
+
+    setImageDimensions({
+      width: 1,
+      height: 1,
+    });
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Severity Color
+  |--------------------------------------------------------------------------
+  */
+
+  const getSeverityClass = (
+    severity: string
+  ) => {
+    switch (
+      severity.toLowerCase()
+    ) {
+      case "critical":
+        return "border-red-500/30 bg-red-500/10 text-red-400";
+
+      case "high":
+        return "border-red-400/30 bg-red-400/10 text-red-400";
+
+      case "medium":
+        return "border-orange-400/30 bg-orange-400/10 text-orange-400";
+
+      case "low":
+        return "border-yellow-400/30 bg-yellow-400/10 text-yellow-400";
+
+      default:
+        return "border-slate-700 bg-slate-900 text-slate-300";
+    }
+  };
+
+  /*
+  |--------------------------------------------------------------------------
+  | Render
+  |--------------------------------------------------------------------------
+  */
+
   return (
-    <div className="mx-auto max-w-[1400px] space-y-6">
+    <div className="space-y-7">
 
-      {/* ======================================================
-          PAGE HEADER
-      ======================================================= */}
+      {/* ================================================================ */}
+      {/* PAGE HEADER */}
+      {/* ================================================================ */}
 
-      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
+      <div>
 
-        <div>
+        <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
 
-          <div className="mb-3 flex items-center gap-2">
+          <ImageIcon className="h-4 w-4" />
 
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 ring-1 ring-emerald-400/20">
-              <ScanLine className="h-4 w-4 text-emerald-400" />
-            </div>
+          AI Road Inspection
 
-            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-400">
-              AI Inspection Center
-            </span>
+        </div>
 
-          </div>
+        <h1 className="text-3xl font-bold text-white">
+          Analyze Road
+        </h1>
 
-          <h1 className="text-3xl font-bold tracking-tight text-[var(--text)] lg:text-4xl">
-            Analyze Road
-          </h1>
+        <p className="mt-2 text-sm text-slate-400">
+          Upload a road image or video and
+          RoadGuard AI will analyze it for
+          potholes, cracks, and other road damage.
+        </p>
 
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted)]">
-            Upload a road image or dashcam video and let RoadGuard AI
-            detect potholes, cracks and other road damage.
+      </div>
+
+      {/* ================================================================ */}
+      {/* UPLOAD CARD */}
+      {/* ================================================================ */}
+
+      <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
+
+        {/* Header */}
+
+        <div className="border-b border-slate-800 px-5 py-5">
+
+          <h2 className="text-base font-bold text-white">
+            Upload Road Media
+          </h2>
+
+          <p className="mt-1 text-xs text-slate-400">
+            Supported formats: JPG, PNG, WEBP
           </p>
 
         </div>
 
-        {/* AI STATUS */}
+        <div className="p-5">
 
-        <div className="flex w-fit items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3">
+          {/* ============================================================ */}
+          {/* UPLOAD AREA */}
+          {/* ============================================================ */}
 
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/10">
-            <ShieldCheck className="h-5 w-5 text-emerald-400" />
-          </div>
+          <label
+            htmlFor="road-image"
+            className="
+              flex min-h-[300px]
+              cursor-pointer flex-col
+              items-center justify-center
+              rounded-2xl border
+              border-dashed border-emerald-400/30
+              bg-emerald-400/[0.03]
+              transition
+              hover:border-emerald-400/60
+              hover:bg-emerald-400/[0.06]
+            "
+          >
 
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-[var(--muted)]">
-              AI Engine
-            </p>
+            {preview ? (
 
-            <p className="text-xs font-semibold text-[var(--text)]">
-              YOLOv8 RoadGuard
-            </p>
-          </div>
+              <div className="flex w-full flex-col items-center gap-5 px-5">
 
-          <span className="ml-2 h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
-
-        </div>
-
-      </div>
-
-      {/* ======================================================
-          MAIN GRID
-      ======================================================= */}
-
-      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
-
-        {/* ====================================================
-            LEFT - UPLOAD / PREVIEW
-        ===================================================== */}
-
-        <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 lg:p-6">
-
-          <div className="mb-5 flex items-center justify-between">
-
-            <div>
-              <h2 className="text-sm font-bold text-[var(--text)]">
-                Upload Inspection Data
-              </h2>
-
-              <p className="mt-1 text-xs text-[var(--muted)]">
-                Supported images and dashcam videos
-              </p>
-            </div>
-
-            <div className="hidden items-center gap-2 text-[10px] text-[var(--muted)] sm:flex">
-              <span className="rounded-md border border-[var(--border)] px-2 py-1">
-                JPG
-              </span>
-
-              <span className="rounded-md border border-[var(--border)] px-2 py-1">
-                PNG
-              </span>
-
-              <span className="rounded-md border border-[var(--border)] px-2 py-1">
-                MP4
-              </span>
-            </div>
-
-          </div>
-
-          {/* ==================================================
-              EMPTY UPLOAD STATE
-          =================================================== */}
-
-          {!selectedFile && (
-
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={`
-                group
-                relative
-                flex
-                min-h-[430px]
-                cursor-pointer
-                flex-col
-                items-center
-                justify-center
-                overflow-hidden
-                rounded-2xl
-                border
-                border-dashed
-                p-8
-                text-center
-                transition-all
-                duration-300
-
-                ${
-                  isDragging
-                    ? `
-                      border-emerald-400
-                      bg-emerald-400/10
-                      shadow-[0_0_50px_rgba(16,185,129,0.08)]
-                    `
-                    : `
-                      border-[var(--border)]
-                      bg-[var(--surface-2)]
-                      hover:border-emerald-400/40
-                      hover:bg-emerald-400/[0.03]
-                    `
-                }
-              `}
-            >
-
-              {/* Background glow */}
-
-              <div className="pointer-events-none absolute left-1/2 top-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-400/5 blur-3xl" />
-
-              {/* Upload Icon */}
-
-              <div
-                className="
-                  relative
-                  flex
-                  h-20
-                  w-20
-                  items-center
-                  justify-center
-                  rounded-2xl
-                  bg-emerald-500/10
-                  ring-1
-                  ring-emerald-400/20
-                  transition
-                  duration-300
-                  group-hover:scale-105
-                  group-hover:bg-emerald-500/15
-                "
-              >
-                <CloudUpload className="h-9 w-9 text-emerald-400" />
-              </div>
-
-              <h3 className="relative mt-6 text-lg font-semibold text-[var(--text)]">
-                Drop your road footage here
-              </h3>
-
-              <p className="relative mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">
-                Drag and drop an image or video, or click below
-                to browse files from your computer.
-              </p>
-
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  fileInputRef.current?.click();
-                }}
-                className="
-                  relative
-                  mt-6
-                  flex
-                  items-center
-                  gap-2
-                  rounded-xl
-                  bg-emerald-400
-                  px-5
-                  py-3
-                  text-sm
-                  font-semibold
-                  text-black
-                  shadow-lg
-                  shadow-emerald-500/10
-                  transition
-                  hover:bg-emerald-300
-                  hover:shadow-emerald-500/20
-                "
-              >
-                <Upload className="h-4 w-4" />
-                Choose File
-              </button>
-
-              <p className="relative mt-4 text-[10px] text-[var(--muted)]">
-                Maximum file size: 100 MB
-              </p>
-
-              {/* Hidden input */}
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*,video/*"
-                onChange={handleInputChange}
-                className="hidden"
-              />
-
-            </div>
-
-          )}
-
-          {/* ==================================================
-              FILE PREVIEW
-          =================================================== */}
-
-          {selectedFile && previewUrl && (
-
-            <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-black">
-
-              {/* Preview */}
-
-              <div className="relative flex min-h-[430px] items-center justify-center bg-black">
-
-                {isVideo ? (
-                  <video
-                    src={previewUrl}
-                    controls
-                    className="max-h-[520px] w-full object-contain"
-                  />
-                ) : (
-                  <img
-                    src={previewUrl}
-                    alt="Road inspection preview"
-                    className="max-h-[520px] w-full object-contain"
-                  />
-                )}
-
-                {/* Remove button */}
-
-                <button
-                  type="button"
-                  onClick={removeFile}
+                <img
+                  src={preview}
+                  alt="Selected road"
                   className="
-                    absolute
-                    right-4
-                    top-4
-                    flex
-                    h-9
-                    w-9
-                    items-center
-                    justify-center
-                    rounded-lg
-                    border
-                    border-white/10
-                    bg-black/70
-                    text-white
-                    backdrop-blur
-                    transition
-                    hover:bg-red-500
+                    max-h-[300px]
+                    max-w-full
+                    rounded-xl
+                    object-contain
                   "
-                  title="Remove file"
-                >
-                  <X className="h-4 w-4" />
-                </button>
+                />
 
-              </div>
+                <div className="text-center">
 
-              {/* File details */}
+                  <p className="text-sm font-semibold text-white">
+                    {file?.name}
+                  </p>
 
-              <div className="flex flex-col gap-4 border-t border-[var(--border)] bg-[var(--surface-2)] p-4 sm:flex-row sm:items-center">
-
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10">
-
-                    {isVideo ? (
-                      <FileVideo className="h-5 w-5 text-emerald-400" />
-                    ) : (
-                      <FileImage className="h-5 w-5 text-emerald-400" />
-                    )}
-
-                  </div>
-
-                  <div className="min-w-0">
-
-                    <p className="truncate text-sm font-medium text-[var(--text)]">
-                      {selectedFile.name}
-                    </p>
-
-                    <p className="mt-0.5 text-[10px] text-[var(--muted)]">
-                      {formatFileSize(selectedFile.size)}
-                      {" • "}
-                      {isVideo ? "Video" : "Image"}
-                    </p>
-
-                  </div>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Click to choose another image
+                  </p>
 
                 </div>
 
-                <button
-                  type="button"
-                  onClick={removeFile}
+              </div>
+
+            ) : (
+
+              <>
+                <div
                   className="
-                    flex
-                    items-center
-                    justify-center
-                    gap-2
-                    rounded-lg
-                    px-3
-                    py-2
-                    text-xs
-                    text-[var(--muted)]
-                    transition
-                    hover:bg-red-500/10
-                    hover:text-red-400
+                    flex h-16 w-16
+                    items-center justify-center
+                    rounded-2xl
+                    bg-emerald-500/10
+                    ring-1 ring-emerald-400/20
                   "
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Remove
+                  <Upload className="h-7 w-7 text-emerald-400" />
+                </div>
+
+                <p className="mt-5 text-sm font-semibold text-white">
+                  Upload road image
+                </p>
+
+                <p className="mt-2 text-xs text-slate-400">
+                  Click here to choose a file
+                </p>
+
+                <span
+                  className="
+                    mt-4 rounded-lg
+                    border border-slate-700
+                    bg-slate-900
+                    px-4 py-2
+                    text-xs font-medium
+                    text-slate-300
+                  "
+                >
+                  Choose File
+                </span>
+              </>
+
+            )}
+
+            <input
+              id="road-image"
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+
+          </label>
+
+          {/* ============================================================ */}
+          {/* SELECTED FILE */}
+          {/* ============================================================ */}
+
+          {file && (
+
+            <div
+              className="
+                mt-4 flex
+                items-center justify-between
+                rounded-xl
+                border border-slate-800
+                bg-slate-900
+                px-4 py-3
+              "
+            >
+
+              <div className="flex items-center gap-3">
+
+                <CheckCircle className="h-5 w-5 text-emerald-400" />
+
+                <div>
+
+                  <p className="text-xs font-semibold text-white">
+                    {file.name}
+                  </p>
+
+                  <p className="text-[10px] text-slate-500">
+                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                  </p>
+
+                </div>
+
+              </div>
+
+              <div className="flex items-center gap-2">
+
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  disabled={uploading}
+                  className="
+                    rounded-lg
+                    border border-slate-700
+                    px-4 py-2
+                    text-xs font-medium
+                    text-slate-400
+                    transition
+                    hover:bg-slate-800
+                    hover:text-white
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+                  Reset
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleAnalyze}
+                  disabled={uploading}
+                  className="
+                    flex items-center gap-2
+                    rounded-lg
+                    bg-emerald-500
+                    px-5 py-2
+                    text-xs font-semibold
+                    text-slate-950
+                    transition
+                    hover:bg-emerald-400
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+
+                  {uploading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <Target className="h-4 w-4" />
+                      Analyze Image
+                    </>
+                  )}
+
                 </button>
 
               </div>
@@ -506,186 +717,611 @@ function AnalyzeRoad() {
 
           )}
 
+          {/* ============================================================ */}
+          {/* MESSAGE */}
+          {/* ============================================================ */}
+
+          {message && (
+
+            <div
+              className="
+                mt-4 flex items-center gap-2
+                rounded-xl
+                border border-slate-800
+                bg-slate-900
+                px-4 py-3
+                text-xs text-slate-300
+              "
+            >
+
+              {message.includes(
+                "successfully"
+              ) ? (
+                <CheckCircle className="h-4 w-4 text-emerald-400" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-emerald-400" />
+              )}
+
+              {message}
+
+            </div>
+
+          )}
+
         </div>
+      </div>
 
-        {/* ====================================================
-            RIGHT - ANALYSIS PANEL
-        ===================================================== */}
+      {/* ================================================================ */}
+      {/* AI DETECTION RESULT */}
+      {/* ================================================================ */}
 
-        <div className="space-y-6">
+      {result && (
 
-          {/* Detection Engine */}
+        <div
+          className="
+            overflow-hidden
+            rounded-2xl
+            border border-emerald-400/20
+            bg-slate-950
+          "
+        >
 
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
+          {/* Result Header */}
+
+          <div
+            className="
+              flex items-center justify-between
+              border-b border-slate-800
+              px-5 py-5
+            "
+          >
 
             <div className="flex items-center gap-3">
 
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10">
-                <ScanLine className="h-5 w-5 text-emerald-400" />
+              <div
+                className="
+                  flex h-10 w-10
+                  items-center justify-center
+                  rounded-xl
+                  bg-emerald-500/10
+                  ring-1 ring-emerald-400/20
+                "
+              >
+                <ShieldCheck className="h-5 w-5 text-emerald-400" />
               </div>
 
               <div>
-                <h3 className="text-sm font-semibold text-[var(--text)]">
-                  Detection Engine
-                </h3>
 
-                <p className="text-[10px] text-[var(--muted)]">
-                  Computer vision pipeline
+                <h2 className="text-base font-bold text-white">
+                  AI Detection Result
+                </h2>
+
+                <p className="text-xs text-slate-400">
+                  RoadGuard AI analysis
                 </p>
+
               </div>
 
             </div>
 
-            <div className="mt-5 space-y-3">
+            <span
+              className="
+                rounded-lg
+                border border-emerald-400/30
+                bg-emerald-400/10
+                px-3 py-1
+                text-[10px]
+                font-semibold
+                text-emerald-400
+              "
+            >
+              {result.status}
+            </span>
 
-              <div className="flex items-center justify-between rounded-lg bg-[var(--surface-2)] p-3">
-                <span className="text-xs text-[var(--muted)]">
-                  Object Detection
-                </span>
+          </div>
 
-                <span className="text-xs font-medium text-emerald-400">
-                  YOLOv8
-                </span>
+          {/* Result Content */}
+
+          <div className="grid gap-5 p-5 lg:grid-cols-2">
+
+            {/* ========================================================== */}
+            {/* IMAGE + BOUNDING BOXES */}
+            {/* ========================================================== */}
+
+            <div>
+
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Analyzed Image
+              </p>
+
+              <div className="relative w-full overflow-visible rounded-xl">
+
+                <img
+                  src={preview}
+                  alt="Analyzed road"
+                  className="
+                    block
+                    h-auto
+                    w-full
+                    rounded-xl
+                  "
+                  onLoad={(event) => {
+                    const img =
+                      event.currentTarget;
+
+                    setImageDimensions({
+                      width:
+                        img.naturalWidth,
+
+                      height:
+                        img.naturalHeight,
+                    });
+                  }}
+                />
+
+                {/* ====================================================== */}
+                {/* YOLO BOUNDING BOXES */}
+                {/* ====================================================== */}
+
+                {aiResult?.detections?.map(
+                  (
+                    detection,
+                    index
+                  ) => {
+
+                    const [
+                      x1,
+                      y1,
+                      x2,
+                      y2,
+                    ] = detection.box;
+
+                    const imageWidth =
+                      imageDimensions.width;
+
+                    const imageHeight =
+                      imageDimensions.height;
+
+                    const left =
+                      (x1 /
+                        imageWidth) *
+                      100;
+
+                    const top =
+                      (y1 /
+                        imageHeight) *
+                      100;
+
+                    const width =
+                      ((x2 - x1) /
+                        imageWidth) *
+                      100;
+
+                    const height =
+                      ((y2 - y1) /
+                        imageHeight) *
+                      100;
+
+                    return (
+                      <div
+                        key={index}
+                        className="
+                          absolute
+                          border-2
+                          border-red-400
+                          pointer-events-none
+                        "
+                        style={{
+                          left: `${left}%`,
+                          top: `${top}%`,
+                          width: `${width}%`,
+                          height: `${height}%`,
+                        }}
+                      >
+
+                        {/* Label */}
+
+                        <div
+                          className="
+                            absolute
+                            -top-7
+                            left-0
+                            whitespace-nowrap
+                            rounded-md
+                            bg-red-500
+                            px-2
+                            py-1
+                            text-[10px]
+                            font-bold
+                            text-white
+                          "
+                        >
+                          {detection.class}{" "}
+                          {(
+                            detection.confidence *
+                            100
+                          ).toFixed(1)}
+                          %
+                        </div>
+
+                      </div>
+                    );
+                  }
+                )}
+
               </div>
 
-              <div className="flex items-center justify-between rounded-lg bg-[var(--surface-2)] p-3">
-                <span className="text-xs text-[var(--muted)]">
+              {/* ======================================================== */}
+              {/* DETECTION COUNT */}
+              {/* ======================================================== */}
+
+              {aiResult && (
+
+                <div
+                  className="
+                    mt-3
+                    flex
+                    items-center
+                    justify-between
+                    rounded-xl
+                    border
+                    border-slate-800
+                    bg-slate-900
+                    px-4
+                    py-3
+                  "
+                >
+
+                  <span className="text-xs text-slate-400">
+                    Total AI detections
+                  </span>
+
+                  <span className="text-sm font-bold text-emerald-400">
+                    {aiResult.count}
+                  </span>
+
+                </div>
+
+              )}
+
+            </div>
+
+            {/* ========================================================== */}
+            {/* DETECTION INFORMATION */}
+            {/* ========================================================== */}
+
+            <div className="space-y-4">
+
+              {/* Damage Type */}
+
+              <div
+                className="
+                  rounded-xl
+                  border border-slate-800
+                  bg-slate-900
+                  p-4
+                "
+              >
+
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                  Damage Type
+                </p>
+
+                <div className="mt-2 flex items-center gap-2">
+
+                  <Activity className="h-5 w-5 text-emerald-400" />
+
+                  <p className="text-xl font-bold text-white">
+                    {result.damageType}
+                  </p>
+
+                </div>
+
+              </div>
+
+              {/* Severity */}
+
+              <div
+                className="
+                  rounded-xl
+                  border border-slate-800
+                  bg-slate-900
+                  p-4
+                "
+              >
+
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">
                   Severity
+                </p>
+
+                <span
+                  className={`
+                    mt-2 inline-flex
+                    rounded-lg
+                    border
+                    px-3 py-1.5
+                    text-xs font-semibold
+                    ${getSeverityClass(
+                      result.severity
+                    )}
+                  `}
+                >
+                  {result.severity}
                 </span>
 
-                <span className="text-xs font-medium text-emerald-400">
-                  AI Classification
-                </span>
               </div>
 
-              <div className="flex items-center justify-between rounded-lg bg-[var(--surface-2)] p-3">
-                <span className="text-xs text-[var(--muted)]">
-                  Processing
+              {/* Confidence */}
+
+              <div
+                className="
+                  rounded-xl
+                  border border-slate-800
+                  bg-slate-900
+                  p-4
+                "
+              >
+
+                <div className="flex items-center justify-between">
+
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                    Detection Confidence
+                  </p>
+
+                  <p className="text-sm font-bold text-emerald-400">
+                    {(
+                      result.confidence *
+                      100
+                    ).toFixed(1)}
+                    %
+                  </p>
+
+                </div>
+
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
+
+                  <div
+                    className="
+                      h-full
+                      rounded-full
+                      bg-emerald-400
+                      transition-all
+                    "
+                    style={{
+                      width: `${
+                        result.confidence *
+                        100
+                      }%`,
+                    }}
+                  />
+
+                </div>
+
+              </div>
+
+              {/* Description */}
+
+              <div
+                className="
+                  rounded-xl
+                  border border-slate-800
+                  bg-slate-900
+                  p-4
+                "
+              >
+
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">
+                  Description
+                </p>
+
+                <p className="mt-2 text-sm leading-6 text-slate-300">
+                  {result.description}
+                </p>
+
+              </div>
+
+              {/* Model */}
+
+              <div className="flex justify-between text-xs">
+
+                <span className="text-slate-500">
+                  AI Model
                 </span>
 
-                <span className="text-xs font-medium text-emerald-400">
-                  GPU Ready
+                <span className="font-medium text-slate-300">
+                  {result.aiModel}
                 </span>
+
+              </div>
+
+              <div className="flex justify-between text-xs">
+
+                <span className="text-slate-500">
+                  Model Version
+                </span>
+
+                <span className="font-medium text-slate-300">
+                  {result.modelVersion}
+                </span>
+
               </div>
 
             </div>
 
           </div>
 
-          {/* Analyze button */}
+          {/* ============================================================ */}
+          {/* ALL DETECTIONS LIST */}
+          {/* ============================================================ */}
 
-          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.03] p-5">
+          {aiResult &&
+            aiResult.detections.length >
+              0 && (
 
-            <div className="flex items-start gap-3">
+              <div
+                className="
+                  border-t
+                  border-slate-800
+                  p-5
+                "
+              >
 
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+                <div className="mb-4 flex items-center justify-between">
 
-              <div>
+                  <div>
 
-                <h3 className="text-sm font-semibold text-[var(--text)]">
-                  Ready for inspection
-                </h3>
+                    <h3 className="text-sm font-bold text-white">
+                      All Detections
+                    </h3>
 
-                <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-                  Upload road footage first. The AI pipeline
-                  will detect and classify road damage.
-                </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      YOLO road damage detections
+                    </p>
 
-              </div>
+                  </div>
 
-            </div>
+                  <span className="rounded-lg bg-emerald-500/10 px-3 py-1 text-xs font-semibold text-emerald-400">
+                    {aiResult.detections.length} found
+                  </span>
 
-            <button
-              type="button"
-              disabled={!selectedFile || isAnalyzing}
-              onClick={startAnalysis}
-              className="
-                mt-5
-                flex
-                w-full
-                items-center
-                justify-center
-                gap-2
-                rounded-xl
-                bg-emerald-400
-                px-4
-                py-3.5
-                text-sm
-                font-semibold
-                text-black
-                transition
-                hover:bg-emerald-300
-                disabled:cursor-not-allowed
-                disabled:opacity-40
-              "
-            >
+                </div>
 
-              {isAnalyzing ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Analyzing Road...
-                </>
-              ) : (
-                <>
-                  <ScanLine className="h-4 w-4" />
-                  Analyze Road
-                </>
-              )}
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
 
-            </button>
+                  {aiResult.detections.map(
+                    (
+                      detection,
+                      index
+                    ) => (
 
-            {analysisStarted && (
+                      <div
+                        key={index}
+                        className="
+                          rounded-xl
+                          border
+                          border-slate-800
+                          bg-slate-900
+                          p-4
+                        "
+                      >
 
-              <div className="mt-4 flex items-center gap-2 rounded-lg bg-emerald-400/10 p-3 text-xs text-emerald-400">
+                        <div className="flex items-center justify-between">
 
-                <CheckCircle2 className="h-4 w-4" />
+                          <span className="text-sm font-semibold capitalize text-white">
+                            {detection.class}
+                          </span>
 
-                Analysis completed successfully.
+                          <span
+                            className={`
+                              rounded-md
+                              border
+                              px-2
+                              py-1
+                              text-[10px]
+                              font-semibold
+                              ${getSeverityClass(
+                                detection.severity ||
+                                  "Low"
+                              )}
+                            `}
+                          >
+                            {detection.severity ||
+                              "Low"}
+                          </span>
+
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between">
+
+                          <span className="text-xs text-slate-500">
+                            Confidence
+                          </span>
+
+                          <span className="text-xs font-bold text-emerald-400">
+                            {(
+                              detection.confidence *
+                              100
+                            ).toFixed(1)}
+                            %
+                          </span>
+
+                        </div>
+
+                      </div>
+
+                    )
+                  )}
+
+                </div>
 
               </div>
 
             )}
 
-          </div>
+        </div>
 
-          {/* What AI detects */}
+      )}
 
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5">
+      {/* ================================================================ */}
+      {/* STEPS */}
+      {/* ================================================================ */}
 
-            <h3 className="text-sm font-semibold text-[var(--text)]">
-              AI will detect
-            </h3>
+      <div className="grid gap-4 lg:grid-cols-3">
 
-            <div className="mt-4 grid grid-cols-2 gap-2">
+        {/* STEP 1 */}
 
-              {[
-                "Potholes",
-                "Cracks",
-                "Surface Damage",
-                "Road Wear",
-              ].map((item) => (
+        <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
 
-                <div
-                  key={item}
-                  className="
-                    rounded-lg
-                    border
-                    border-[var(--border)]
-                    bg-[var(--surface-2)]
-                    px-3
-                    py-2.5
-                    text-xs
-                    text-[var(--muted)]
-                  "
-                >
-                  {item}
-                </div>
+          <p className="text-xs text-slate-500">
+            STEP 01
+          </p>
 
-              ))}
+          <h3 className="mt-3 text-base font-bold text-white">
+            Upload
+          </h3>
 
-            </div>
+          <p className="mt-2 text-xs leading-6 text-slate-400">
+            Upload road imagery from a phone,
+            dashcam, or inspection vehicle.
+          </p>
 
-          </div>
+        </div>
+
+        {/* STEP 2 */}
+
+        <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
+
+          <p className="text-xs text-slate-500">
+            STEP 02
+          </p>
+
+          <h3 className="mt-3 text-base font-bold text-white">
+            AI Detection
+          </h3>
+
+          <p className="mt-2 text-xs leading-6 text-slate-400">
+            YOLO-based computer vision identifies
+            road damage and calculates confidence.
+          </p>
+
+        </div>
+
+        {/* STEP 3 */}
+
+        <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
+
+          <p className="text-xs text-slate-500">
+            STEP 03
+          </p>
+
+          <h3 className="mt-3 text-base font-bold text-white">
+            Severity Analysis
+          </h3>
+
+          <p className="mt-2 text-xs leading-6 text-slate-400">
+            Damage is classified into Low,
+            Medium, High, and Critical.
+          </p>
 
         </div>
 

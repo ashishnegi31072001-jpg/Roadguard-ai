@@ -1,6 +1,36 @@
 @import "tailwindcss";
 
 :root {
+  --background: #070b0a;
+  --surface: #0d1211;
+  --surface-2: #121918;
+  --surface-3: #18211f;
+
+  --border: rgba(255, 255, 255, 0.08);
+
+  --text: #f5f7f6;
+  --muted: #8d9a96;
+
+  --primary: #34d399;
+  --primary-hover: #6ee7b7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+
+  background: var(--background);
+  color: var(--text);
+
   font-family:
     Inter,
     ui-sans-serif,
@@ -9,93 +39,20 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
 }
 
-html,
-body,
-#root {
-  min-height: 100%;
-  margin: 0;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  min-width: 320px;
-}
-
-/* ================================
-   ROADGUARD DARK THEME
-================================ */
-
-:root[data-theme="dark"] {
-  --background: #02070b;
-  --surface: #071017;
-  --surface-2: #0b151d;
-  --surface-3: #101d26;
-
-  --border: #172630;
-  --border-light: #223540;
-
-  --text: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --muted: #81909c;
-
-  --primary: #19e58f;
-  --primary-hover: #39f5a4;
-
-  --danger: #ff4d4d;
-  --warning: #ff9f1c;
-  --low: #f5c518;
-
-  --shadow: rgba(0, 0, 0, 0.35);
-}
-
-/* ================================
-   ROADGUARD LIGHT THEME
-================================ */
-
-:root[data-theme="light"] {
-  --background: #f4f7f8;
-  --surface: #ffffff;
-  --surface-2: #f8fafb;
-  --surface-3: #eef3f5;
-
-  --border: #dce5e9;
-  --border-light: #cbd7dc;
-
-  --text: #0f1720;
-  --text-secondary: #475569;
-  --muted: #64748b;
-
-  --primary: #00a968;
-  --primary-hover: #008f58;
-
-  --danger: #dc2626;
-  --warning: #d97706;
-  --low: #ca8a04;
-
-  --shadow: rgba(15, 23, 42, 0.08);
-}
-
-body {
-  background: var(--background);
-  color: var(--text);
-
-  transition:
-    background-color 0.3s ease,
-    color 0.3s ease;
+button,
+input,
+textarea,
+select {
+  font: inherit;
 }
 
 button {
-  font: inherit;
+  cursor: pointer;
 }
 
-input {
-  font: inherit;
+img {
+  max-width: 100%;
+  display: block;
 }
