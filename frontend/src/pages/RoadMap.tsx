@@ -1,356 +1,366 @@
-import { useEffect, useState } from "react";
-import {
-  Map,
-  MapPin,
-  AlertTriangle,
-  RefreshCw,
-  Activity,
-} from "lucide-react";
 
-const API_URL = "http://localhost:5000/api/detections";
+import { useCallback, useEffect, useState } from "react";
+import {
+  MapContainer,
+  TileLayer,
+  CircleMarker,
+  Popup,
+  useMap,
+} from "react-leaflet";
+import L from "leaflet";
+import {
+  AlertTriangle,
+  MapPin,
+  RefreshCw,
+  Search,
+} from "lucide-react";
 
 interface Detection {
   _id: string;
-  damageType?: string;
-  severity?: string;
-  confidence?: number;
-  imageUrl?: string;
-  createdAt?: string;
+  damageType: string;
+  severity: string;
+  confidence: number;
+  imageUrl: string;
+  status: string;
+  createdAt: string;
   location?: {
     road?: string;
     area?: string;
+    latitude?: number | null;
+    longitude?: number | null;
   };
 }
 
-function RoadMap() {
+interface ApiResponse {
+  success: boolean;
+  detections: Detection[];
+}
+
+const API_URL = "http://localhost:5000/api/detections";
+
+// Dehradun is used only as the initial map center.
+const DEFAULT_CENTER: [number, number] = [30.3165, 78.0322];
+
+function severityColor(severity: string) {
+  switch (severity) {
+    case "Critical":
+      return "#a855f7";
+    case "High":
+      return "#ef4444";
+    case "Medium":
+      return "#f59e0b";
+    default:
+      return "#10b981";
+  }
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "Unknown date"
+    : date.toLocaleString();
+}
+
+function FitMarkers({ detections }: { detections: Detection[] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const points = detections
+      .filter(
+        (item) =>
+          typeof item.location?.latitude === "number" &&
+          typeof item.location?.longitude === "number" &&
+          Number.isFinite(item.location.latitude) &&
+          Number.isFinite(item.location.longitude) &&
+          item.location.latitude >= -90 &&
+          item.location.latitude <= 90 &&
+          item.location.longitude >= -180 &&
+          item.location.longitude <= 180
+      )
+      .map(
+        (item) =>
+          [
+            item.location!.latitude!,
+            item.location!.longitude!,
+          ] as [number, number]
+      );
+
+    if (points.length === 1) {
+      map.setView(points[0], 15);
+    } else if (points.length > 1) {
+      map.fitBounds(L.latLngBounds(points), { padding: [35, 35] });
+    }
+  }, [detections, map]);
+
+  return null;
+}
+
+export default function RoadMap() {
   const [detections, setDetections] = useState<Detection[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("All");
 
-  const fetchDetections = async () => {
+  const loadDetections = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
       const response = await fetch(API_URL);
-      const data = await response.json();
 
-      if (!response.ok || !data.success) {
-        throw new Error(
-          data.message || "Failed to load road data"
-        );
+      if (!response.ok) {
+        throw new Error(`Backend returned HTTP ${response.status}`);
       }
 
-      setDetections(data.detections || []);
-    } catch (err) {
-      console.error("Road map error:", err);
+      const data: ApiResponse = await response.json();
 
+      if (data.success !== true || !Array.isArray(data.detections)) {
+        throw new Error("Invalid detection response from server.");
+      }
+
+      setDetections(data.detections);
+    } catch (err) {
       setError(
-        "Unable to load road detection data."
+        err instanceof Error
+          ? err.message
+          : "Unable to load map detections."
       );
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchDetections();
   }, []);
 
-  const highCount = detections.filter(
-    (item) =>
-      item.severity?.toLowerCase() === "high" ||
-      item.severity?.toLowerCase() === "critical"
-  ).length;
+  useEffect(() => {
+    void loadDetections();
+  }, [loadDetections]);
 
-  const mediumCount = detections.filter(
-    (item) =>
-      item.severity?.toLowerCase() === "medium"
-  ).length;
+  const mappedDetections = detections.filter((item) => {
+    const lat = item.location?.latitude;
+    const lng = item.location?.longitude;
 
-  const lowCount = detections.filter(
-    (item) =>
-      item.severity?.toLowerCase() === "low"
-  ).length;
-
-  const getSeverityStyle = (
-    severity?: string
-  ) => {
-    switch (severity?.toLowerCase()) {
-      case "high":
-      case "critical":
-        return "border-red-500/30 bg-red-500/10 text-red-400";
-
-      case "medium":
-        return "border-yellow-500/30 bg-yellow-500/10 text-yellow-400";
-
-      default:
-        return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
-    }
-  };
-
-  if (loading) {
     return (
-      <div className="flex min-h-[500px] items-center justify-center">
-        <div className="flex items-center gap-3 text-emerald-400">
-          <RefreshCw className="h-5 w-5 animate-spin" />
-          Loading road map...
-        </div>
-      </div>
+      typeof lat === "number" &&
+      Number.isFinite(lat) &&
+      lat >= -90 &&
+      lat <= 90 &&
+      typeof lng === "number" &&
+      Number.isFinite(lng) &&
+      lng >= -180 &&
+      lng <= 180
     );
-  }
+  });
+
+  const filteredDetections = mappedDetections.filter((item) => {
+    const query = search.trim().toLowerCase();
+
+    const matchesSearch =
+      !query ||
+      [
+        item.damageType,
+        item.location?.road,
+        item.location?.area,
+        item.severity,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+
+    const matchesSeverity =
+      severityFilter === "All" ||
+      item.severity === severityFilter;
+
+    return matchesSearch && matchesSeverity;
+  });
+
+  const withoutGps = detections.length - mappedDetections.length;
 
   return (
-    <div className="space-y-7">
-
-      {/* HEADER */}
-
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
-
+    <main className="space-y-6 text-slate-100">
+      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
-            <Map className="h-4 w-4" />
-            Road Intelligence
-          </div>
-
-          <h1 className="text-3xl font-bold text-white">
-            Road Map
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-400">
+            RoadGuard AI / Mapping
+          </p>
+          <h1 className="mt-2 text-3xl font-bold">
+            Road Damage Map
           </h1>
-
           <p className="mt-2 text-sm text-slate-400">
-            View road damage detection locations and severity.
+            View saved road damage detections with valid GPS coordinates.
           </p>
         </div>
 
         <button
-          type="button"
-          onClick={fetchDetections}
-          className="
-            flex items-center gap-2
-            rounded-xl
-            border border-slate-700
-            bg-slate-900
-            px-4 py-3
-            text-sm font-medium
-            text-slate-300
-            transition
-            hover:border-emerald-500/40
-            hover:text-white
-          "
+          onClick={() => void loadDetections()}
+          disabled={loading}
+          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-sm hover:bg-slate-800 disabled:opacity-50"
         >
-          <RefreshCw className="h-4 w-4" />
-          Refresh
+          <RefreshCw
+            size={16}
+            className={loading ? "animate-spin" : ""}
+          />
+          Refresh map data
         </button>
-
-      </div>
-
-      {/* ERROR */}
+      </header>
 
       {error && (
-        <div className="flex items-center gap-3 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
-          <AlertTriangle className="h-5 w-5" />
+        <div
+          role="alert"
+          className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300"
+        >
           {error}
         </div>
       )}
 
-      {/* SUMMARY */}
-
-      <div className="grid gap-4 md:grid-cols-3">
-
-        <div className="rounded-2xl border border-red-500/20 bg-slate-950 p-5">
-          <p className="text-xs uppercase tracking-wider text-slate-500">
-            High Risk
-          </p>
-
-          <p className="mt-2 text-3xl font-bold text-red-400">
-            {highCount}
+      <section className="grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+          <p className="text-sm text-slate-400">Saved detections</p>
+          <p className="mt-2 text-3xl font-bold">
+            {loading || error ? "—" : detections.length}
           </p>
         </div>
 
-        <div className="rounded-2xl border border-yellow-500/20 bg-slate-950 p-5">
-          <p className="text-xs uppercase tracking-wider text-slate-500">
-            Medium Risk
-          </p>
-
-          <p className="mt-2 text-3xl font-bold text-yellow-400">
-            {mediumCount}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-emerald-500/20 bg-slate-950 p-5">
-          <p className="text-xs uppercase tracking-wider text-slate-500">
-            Low Risk
-          </p>
-
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+          <p className="text-sm text-slate-400">Mapped records</p>
           <p className="mt-2 text-3xl font-bold text-emerald-400">
-            {lowCount}
+            {loading || error ? "—" : mappedDetections.length}
           </p>
         </div>
 
-      </div>
-
-      {/* MAP PLACEHOLDER */}
-
-      <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950">
-
-        <div className="border-b border-slate-800 px-6 py-5">
-          <h2 className="text-lg font-semibold text-white">
-            Detection Map
-          </h2>
-
-          <p className="mt-1 text-xs text-slate-500">
-            Geographic visualization will be enabled when GPS coordinates are available.
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
+          <p className="text-sm text-slate-400">Missing GPS</p>
+          <p className="mt-2 text-3xl font-bold text-amber-400">
+            {loading || error ? "—" : withoutGps}
           </p>
         </div>
+      </section>
 
-        <div className="relative flex min-h-[400px] items-center justify-center overflow-hidden bg-slate-900">
-
-          {/* GRID */}
-
-          <div
-            className="
-              absolute inset-0
-              opacity-20
-              [background-image:linear-gradient(rgba(148,163,184,.2)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,.2)_1px,transparent_1px)]
-              [background-size:40px_40px]
-            "
+      <section className="grid gap-4 md:grid-cols-[1fr_220px]">
+        <label className="flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-900 px-4">
+          <Search size={18} className="text-slate-500" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search damage type, road, or area..."
+            className="w-full bg-transparent py-3 text-sm outline-none placeholder:text-slate-500"
           />
+        </label>
 
-          <div className="relative z-10 text-center">
+        <select
+          value={severityFilter}
+          onChange={(event) => setSeverityFilter(event.target.value)}
+          className="rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm outline-none"
+          aria-label="Filter by severity"
+        >
+          <option value="All">All severities</option>
+          <option value="Critical">Critical</option>
+          <option value="High">High</option>
+          <option value="Medium">Medium</option>
+          <option value="Low">Low</option>
+        </select>
+      </section>
 
-            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500/10 ring-1 ring-emerald-500/20">
-              <MapPin className="h-10 w-10 text-emerald-400" />
-            </div>
-
-            <h3 className="mt-5 text-lg font-semibold text-white">
-              GPS Mapping Ready
-            </h3>
-
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
-              Your detection system is working. GPS coordinates can be connected next to place each road-damage detection on the map.
+      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 p-4">
+          <div>
+            <h2 className="font-semibold">Interactive map</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              {loading
+                ? "Loading map data..."
+                : `${filteredDetections.length} matching mapped records`}
             </p>
-
           </div>
 
+          <div className="flex flex-wrap gap-3 text-xs text-slate-400">
+            {["Critical", "High", "Medium", "Low"].map((level) => (
+              <span key={level} className="flex items-center gap-1.5">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: severityColor(level) }}
+                />
+                {level}
+              </span>
+            ))}
+          </div>
         </div>
 
-      </div>
+        <div className="relative h-[480px] w-full bg-slate-950">
+          <MapContainer
+            center={DEFAULT_CENTER}
+            zoom={11}
+            scrollWheelZoom
+            className="h-full w-full"
+          >
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
 
-      {/* RECENT LOCATIONS */}
+            <FitMarkers detections={filteredDetections} />
 
-      <div className="rounded-2xl border border-slate-800 bg-slate-950">
-
-        <div className="border-b border-slate-800 px-6 py-5">
-
-          <div className="flex items-center gap-3">
-
-            <Activity className="h-5 w-5 text-emerald-400" />
-
-            <div>
-              <h2 className="text-lg font-semibold text-white">
-                Recent Road Detections
-              </h2>
-
-              <p className="mt-1 text-xs text-slate-500">
-                Latest detected road damage.
-              </p>
-            </div>
-
-          </div>
-
-        </div>
-
-        {detections.length === 0 ? (
-
-          <div className="p-10 text-center text-sm text-slate-500">
-            No road detections available.
-          </div>
-
-        ) : (
-
-          <div className="divide-y divide-slate-800">
-
-            {detections.slice(0, 10).map(
-              (detection) => (
-
-                <div
-                  key={detection._id}
-                  className="
-                    flex flex-col gap-4
-                    p-5
-                    transition
-                    hover:bg-slate-900/50
-                    md:flex-row
-                    md:items-center
-                  "
-                >
-
-                  <div className="flex flex-1 items-center gap-4">
-
-                    <div className="rounded-xl bg-emerald-500/10 p-3">
-                      <MapPin className="h-5 w-5 text-emerald-400" />
-                    </div>
-
-                    <div>
-
-                      <h3 className="text-sm font-semibold capitalize text-white">
-                        {detection.damageType ||
-                          "Unknown Damage"}
-                      </h3>
-
-                      <p className="mt-1 text-xs text-slate-500">
-                        {detection.location?.road ||
-                          "Unknown Road"}
-                        {" • "}
-                        {detection.location?.area ||
-                          "Unknown Area"}
-                      </p>
-
-                    </div>
-
-                  </div>
-
-                  <div className="flex items-center gap-4">
-
-                    <span
-                      className={`
-                        rounded-lg
-                        border
-                        px-3 py-1.5
-                        text-xs
-                        font-semibold
-                        ${getSeverityStyle(
-                          detection.severity
-                        )}
-                      `}
+            {filteredDetections.map((item) => (
+              <CircleMarker
+                key={item._id}
+                center={[
+                  item.location!.latitude!,
+                  item.location!.longitude!,
+                ]}
+                radius={8}
+                pathOptions={{
+                  color: severityColor(item.severity),
+                  fillColor: severityColor(item.severity),
+                  fillOpacity: 0.8,
+                  weight: 2,
+                }}
+              >
+                <Popup>
+                  <div className="min-w-[180px] space-y-1 text-slate-900">
+                    <strong>{item.damageType}</strong>
+                    <p>Severity: {item.severity}</p>
+                    <p>
+                      Confidence:{" "}
+                      {Number.isFinite(item.confidence)
+                        ? `${(item.confidence * 100).toFixed(1)}%`
+                        : "N/A"}
+                    </p>
+                    <p>Road: {item.location?.road || "Unknown"}</p>
+                    <p>Area: {item.location?.area || "Unknown"}</p>
+                    <p>{formatDate(item.createdAt)}</p>
+                    <a
+                      href={`https://www.google.com/maps?q=${item.location!.latitude},${item.location!.longitude}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block text-blue-700 underline"
                     >
-                      {detection.severity ||
-                        "Low"}
-                    </span>
-
-                    <span className="text-xs font-semibold text-slate-400">
-                      {(
-                        (detection.confidence ||
-                          0) * 100
-                      ).toFixed(1)}
-                      %
-                    </span>
-
+                      Open in Google Maps
+                    </a>
                   </div>
+                </Popup>
+              </CircleMarker>
+            ))}
+          </MapContainer>
 
-                </div>
+          {!loading && !error && filteredDetections.length === 0 && (
+            <div className="absolute inset-x-4 top-4 z-[1000] flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/95 p-3 text-sm text-slate-300">
+              <MapPin size={18} className="text-amber-400" />
+              No mapped records match these filters. Check GPS data or clear
+              your filters.
+            </div>
+          )}
+        </div>
+      </section>
 
-              )
-            )}
-
-          </div>
-
-        )}
-
-      </div>
-
-    </div>
+      {!loading && !error && withoutGps > 0 && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-200">
+          <AlertTriangle size={19} className="mt-0.5 shrink-0" />
+          <p>
+            {withoutGps} record(s) have no valid GPS coordinates and cannot
+            appear on the map. Add or capture coordinates when submitting an
+            inspection to map these detections.
+          </p>
+        </div>
+      )}
+    </main>
   );
 }
-
-export default RoadMap;

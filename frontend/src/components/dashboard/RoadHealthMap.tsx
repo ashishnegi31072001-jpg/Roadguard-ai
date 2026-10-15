@@ -1,216 +1,612 @@
 import {
   Crosshair,
   Layers,
-  MapPin,
   Plus,
   Minus,
 } from "lucide-react";
 
-const locations = [
-  {
-    name: "NH-48",
-    x: "27%",
-    y: "35%",
-    type: "critical",
-  },
-  {
-    name: "Ring Road",
-    x: "62%",
-    y: "27%",
-    type: "high",
-  },
-  {
-    name: "MG Road",
-    x: "45%",
-    y: "64%",
-    type: "medium",
-  },
-  {
-    name: "University Road",
-    x: "77%",
-    y: "70%",
-    type: "low",
-  },
-];
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  useMap,
+} from "react-leaflet";
 
-const markerStyles = {
-  critical: "bg-red-500 shadow-red-500/50",
-  high: "bg-orange-400 shadow-orange-400/50",
-  medium: "bg-yellow-400 shadow-yellow-400/50",
-  low: "bg-emerald-400 shadow-emerald-400/50",
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
+import { useEffect, useState } from "react";
+
+/* ==========================================================================
+   TYPES
+   ========================================================================== */
+
+interface Detection {
+  _id: string;
+  damageType: string;
+  severity:
+    | "Low"
+    | "Medium"
+    | "High"
+    | "Critical";
+  confidence: number;
+
+  location?: {
+    road?: string;
+    area?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+  };
+
+  imageUrl?: string;
+  createdAt?: string;
+}
+
+/* ==========================================================================
+   API
+   ========================================================================== */
+
+const API_URL =
+  "http://localhost:5000/api/detections";
+
+/* ==========================================================================
+   MARKER ICON
+   ========================================================================== */
+
+const createMarkerIcon = (
+  severity: Detection["severity"]
+) => {
+  const colors = {
+    Critical: "#ef4444",
+    High: "#fb923c",
+    Medium: "#facc15",
+    Low: "#34d399",
+  };
+
+  return L.divIcon({
+    className: "",
+    html: `
+      <div
+        style="
+          width: 18px;
+          height: 18px;
+          background: ${colors[severity]};
+          border: 3px solid white;
+          border-radius: 50%;
+          box-shadow: 0 0 12px ${colors[severity]};
+        "
+      ></div>
+    `,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
 };
 
-function RoadHealthMap() {
+/* ==========================================================================
+   MAP CONTROLS
+   ========================================================================== */
+
+function MapControls({
+  onLocate,
+}: {
+  onLocate: () => void;
+}) {
+  const map = useMap();
+
   return (
-    <section className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)]">
-
-      {/* HEADER */}
-
-      <div className="flex items-center justify-between p-5">
-
-        <div>
-          <h2 className="text-sm font-bold uppercase tracking-wide text-[var(--text)]">
-            Road Health Map
-          </h2>
-
-          <p className="mt-1 text-[11px] text-[var(--muted)]">
-            Live infrastructure condition
-          </p>
-        </div>
-
-        <button className="text-xs text-[var(--muted)] transition hover:text-emerald-400">
-          View Full Map
-        </button>
-
-      </div>
-
-      {/* MAP */}
+    <>
+      {/* ZOOM CONTROLS */}
 
       <div
         className="
-          relative h-[320px]
+          absolute
+          right-4
+          top-4
+          z-[1000]
+          flex
+          flex-col
           overflow-hidden
-          border-y border-[var(--border)]
-          bg-[#0b151b]
+          rounded-lg
+          border
+          border-white/10
+          bg-black/60
+          backdrop-blur-md
         "
       >
-
-        {/* MAP GRID */}
-
-        <div
-          className="absolute inset-0 opacity-50"
-          style={{
-            backgroundImage: `
-              linear-gradient(30deg, transparent 48%, rgba(255,255,255,.05) 49%, transparent 51%),
-              linear-gradient(120deg, transparent 48%, rgba(255,255,255,.04) 49%, transparent 51%),
-              linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px)
-            `,
-            backgroundSize:
-              "140px 140px, 180px 180px, 40px 40px, 40px 40px",
-          }}
-        />
-
-        {/* FAKE ROADS */}
-
-        <svg
-          className="absolute inset-0 h-full w-full"
-          viewBox="0 0 600 320"
-          preserveAspectRatio="none"
+        <button
+          type="button"
+          onClick={() => map.zoomIn()}
+          className="
+            flex
+            h-9
+            w-9
+            items-center
+            justify-center
+            text-white
+            transition
+            hover:bg-white/10
+          "
         >
-          <path
-            d="M-20 220 C120 170 120 80 240 120 S400 260 620 80"
-            fill="none"
-            stroke="#33434c"
-            strokeWidth="15"
-          />
+          <Plus className="h-4 w-4" />
+        </button>
 
-          <path
-            d="M-20 220 C120 170 120 80 240 120 S400 260 620 80"
-            fill="none"
-            stroke="#60727c"
-            strokeWidth="2"
-          />
+        <div className="h-px bg-white/10" />
 
-          <path
-            d="M70 320 C140 250 250 260 320 170 S450 80 540 -20"
-            fill="none"
-            stroke="#293940"
-            strokeWidth="11"
-          />
+        <button
+          type="button"
+          onClick={() => map.zoomOut()}
+          className="
+            flex
+            h-9
+            w-9
+            items-center
+            justify-center
+            text-white
+            transition
+            hover:bg-white/10
+          "
+        >
+          <Minus className="h-4 w-4" />
+        </button>
+      </div>
 
-          <path
-            d="M70 320 C140 250 250 260 320 170 S450 80 540 -20"
-            fill="none"
-            stroke="#53636b"
-            strokeWidth="2"
-          />
+      {/* CURRENT LOCATION */}
 
-          <path
-            d="M0 65 C120 110 230 45 330 80 S480 160 620 135"
-            fill="none"
-            stroke="#28383f"
-            strokeWidth="9"
-          />
+      <button
+        type="button"
+        onClick={onLocate}
+        className="
+          absolute
+          bottom-4
+          right-4
+          z-[1000]
+          flex
+          h-9
+          w-9
+          items-center
+          justify-center
+          rounded-lg
+          border
+          border-white/10
+          bg-black/60
+          text-white
+          backdrop-blur-md
+          transition
+          hover:bg-white/10
+        "
+        title="Center map"
+      >
+        <Crosshair className="h-4 w-4" />
+      </button>
 
-          <path
-            d="M0 65 C120 110 230 45 330 80 S480 160 620 135"
-            fill="none"
-            stroke="#4d5c63"
-            strokeWidth="2"
-          />
-        </svg>
+      {/* MAP TYPE */}
 
-        {/* LOCATION MARKERS */}
+      <div
+        className="
+          absolute
+          left-4
+          top-4
+          z-[1000]
+          flex
+          items-center
+          gap-2
+          rounded-lg
+          border
+          border-white/10
+          bg-black/60
+          px-3
+          py-2
+          text-[10px]
+          text-white
+          backdrop-blur-md
+        "
+      >
+        <Layers className="h-3.5 w-3.5" />
 
-        {locations.map((location) => (
-          <div
-            key={location.name}
-            className="absolute -translate-x-1/2 -translate-y-1/2"
-            style={{
-              left: location.x,
-              top: location.y,
-            }}
+        Road Health
+      </div>
+    </>
+  );
+}
+
+/* ==========================================================================
+   MAIN COMPONENT
+   ========================================================================== */
+
+function RoadHealthMap() {
+  const [detections, setDetections] =
+    useState<Detection[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
+
+  /* ------------------------------------------------------------------------
+     DEFAULT MAP LOCATION
+     ------------------------------------------------------------------------ */
+
+  const defaultPosition: [
+    number,
+    number
+  ] = [30.306697, 77.949907];
+
+  /* ------------------------------------------------------------------------
+     FETCH DETECTIONS
+     ------------------------------------------------------------------------ */
+
+  const fetchDetections = async () => {
+    try {
+      setLoading(true);
+
+      const response =
+        await fetch(API_URL);
+
+      if (!response.ok) {
+        throw new Error(
+          "Failed to fetch detections"
+        );
+      }
+
+      const data =
+        await response.json();
+
+      if (data.success) {
+        setDetections(
+          data.detections || []
+        );
+      }
+    } catch (error) {
+      console.error(
+        "Road health map error:",
+        error
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* ------------------------------------------------------------------------
+     LOAD DATA
+     ------------------------------------------------------------------------ */
+
+  useEffect(() => {
+    fetchDetections();
+  }, []);
+
+  /* ------------------------------------------------------------------------
+     DETECTIONS WITH VALID GPS
+     ------------------------------------------------------------------------ */
+
+  const mappedDetections =
+    detections.filter(
+      (detection) =>
+        typeof detection.location
+          ?.latitude === "number" &&
+        typeof detection.location
+          ?.longitude === "number"
+    );
+
+  /* ------------------------------------------------------------------------
+     MAP CENTER
+     ------------------------------------------------------------------------ */
+
+  const mapCenter: [
+    number,
+    number
+  ] =
+    mappedDetections.length > 0
+      ? [
+          mappedDetections[0].location!
+            .latitude as number,
+          mappedDetections[0].location!
+            .longitude as number,
+        ]
+      : defaultPosition;
+
+  /* ------------------------------------------------------------------------
+     CENTER MAP
+     ------------------------------------------------------------------------ */
+
+  const centerMap = () => {
+    window.dispatchEvent(
+      new CustomEvent(
+        "roadguard-center-map"
+      )
+    );
+  };
+
+  /* ==========================================================================
+     UI
+     ========================================================================== */
+
+  return (
+    <section
+      className="
+        overflow-hidden
+        rounded-2xl
+        border
+        border-[var(--border)]
+        bg-[var(--surface)]
+      "
+    >
+      {/* ================================================================== */}
+      {/* HEADER */}
+      {/* ================================================================== */}
+
+      <div
+        className="
+          flex
+          items-center
+          justify-between
+          p-5
+        "
+      >
+        <div>
+          <h2
+            className="
+              text-sm
+              font-bold
+              uppercase
+              tracking-wide
+              text-[var(--text)]
+            "
           >
+            Road Health Map
+          </h2>
 
-            <div
-              className={`
-                h-5 w-5
-                rounded-full
-                border-2 border-white/70
-                shadow-lg
-                ${markerStyles[location.type as keyof typeof markerStyles]}
-              `}
-            />
-
-            <div className="absolute left-1/2 top-7 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/70 px-2 py-1 text-[9px] text-white backdrop-blur-md">
-              {location.name}
-            </div>
-
-          </div>
-        ))}
-
-        {/* MAP CONTROLS */}
-
-        <div className="absolute right-4 top-4 flex flex-col overflow-hidden rounded-lg border border-white/10 bg-black/50 backdrop-blur-md">
-
-          <button className="flex h-9 w-9 items-center justify-center text-white transition hover:bg-white/10">
-            <Plus className="h-4 w-4" />
-          </button>
-
-          <div className="h-px bg-white/10" />
-
-          <button className="flex h-9 w-9 items-center justify-center text-white transition hover:bg-white/10">
-            <Minus className="h-4 w-4" />
-          </button>
-
+          <p
+            className="
+              mt-1
+              text-[11px]
+              text-[var(--muted)]
+            "
+          >
+            Real-time AI detection locations
+          </p>
         </div>
 
-        <button className="absolute bottom-4 right-4 flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 bg-black/50 text-white backdrop-blur-md transition hover:bg-white/10">
-          <Crosshair className="h-4 w-4" />
-        </button>
+        <div
+          className="
+            flex
+            items-center
+            gap-2
+            text-[10px]
+            text-[var(--muted)]
+          "
+        >
+          <span
+            className="
+              h-2
+              w-2
+              animate-pulse
+              rounded-full
+              bg-emerald-400
+            "
+          />
 
-        <button className="absolute left-4 top-4 flex items-center gap-2 rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-[10px] text-white backdrop-blur-md">
-          <Layers className="h-3.5 w-3.5" />
-          Road Health
-        </button>
-
+          {mappedDetections.length}{" "}
+          locations
+        </div>
       </div>
 
+      {/* ================================================================== */}
+      {/* MAP */}
+      {/* ================================================================== */}
+
+      <div
+        className="
+          relative
+          h-[320px]
+          overflow-hidden
+          border-y
+          border-[var(--border)]
+        "
+      >
+        <MapContainer
+          center={mapCenter}
+          zoom={13}
+          scrollWheelZoom={true}
+          className="h-full w-full"
+        >
+          {/* OPEN STREET MAP */}
+
+          <TileLayer
+            attribution='&copy; OpenStreetMap contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+
+          {/* ============================================================ */}
+          {/* DETECTION MARKERS */}
+          {/* ============================================================ */}
+
+          {mappedDetections.map(
+            (detection) => {
+              const latitude =
+                detection.location!
+                  .latitude as number;
+
+              const longitude =
+                detection.location!
+                  .longitude as number;
+
+              return (
+                <Marker
+                  key={detection._id}
+                  position={[
+                    latitude,
+                    longitude,
+                  ]}
+                  icon={createMarkerIcon(
+                    detection.severity
+                  )}
+                >
+                  <Popup>
+                    <div
+                      className="
+                        min-w-[180px]
+                        text-sm
+                      "
+                    >
+                      <p
+                        className="
+                          font-bold
+                          capitalize
+                        "
+                      >
+                        {detection.damageType}
+                      </p>
+
+                      <div className="mt-2 space-y-1">
+                        <p>
+                          <strong>
+                            Severity:
+                          </strong>{" "}
+                          {detection.severity}
+                        </p>
+
+                        <p>
+                          <strong>
+                            Confidence:
+                          </strong>{" "}
+                          {(
+                            detection.confidence *
+                            100
+                          ).toFixed(1)}
+                          %
+                        </p>
+
+                        <p>
+                          <strong>
+                            Road:
+                          </strong>{" "}
+                          {detection.location
+                            ?.road ||
+                            "Unknown Road"}
+                        </p>
+
+                        <p>
+                          <strong>
+                            Area:
+                          </strong>{" "}
+                          {detection.location
+                            ?.area ||
+                            "Unknown Area"}
+                        </p>
+                      </div>
+                    </div>
+                  </Popup>
+                </Marker>
+              );
+            }
+          )}
+
+          <MapControls
+            onLocate={centerMap}
+          />
+        </MapContainer>
+
+        {/* ================================================================ */}
+        {/* NO GPS DATA */}
+        {/* ================================================================ */}
+
+        {!loading &&
+          mappedDetections.length ===
+            0 && (
+            <div
+              className="
+                absolute
+                bottom-4
+                left-1/2
+                z-[1000]
+                -translate-x-1/2
+                rounded-lg
+                border
+                border-white/10
+                bg-black/70
+                px-4
+                py-2
+                text-[10px]
+                text-white
+                backdrop-blur-md
+              "
+            >
+              No detection locations
+              available
+            </div>
+          )}
+
+        {/* ================================================================ */}
+        {/* LOADING */}
+        {/* ================================================================ */}
+
+        {loading && (
+          <div
+            className="
+              absolute
+              inset-0
+              z-[1100]
+              flex
+              items-center
+              justify-center
+              bg-black/40
+              backdrop-blur-sm
+            "
+          >
+            <div
+              className="
+                rounded-lg
+                bg-black/70
+                px-4
+                py-2
+                text-xs
+                text-white
+              "
+            >
+              Loading road data...
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ================================================================== */}
       {/* LEGEND */}
+      {/* ================================================================== */}
 
-      <div className="flex flex-wrap gap-5 p-4">
+      <div
+        className="
+          flex
+          flex-wrap
+          gap-5
+          p-4
+        "
+      >
+        <Legend
+          color="bg-red-500"
+          label="Critical"
+        />
 
-        <Legend color="bg-red-500" label="Critical" />
-        <Legend color="bg-orange-400" label="High" />
-        <Legend color="bg-yellow-400" label="Medium" />
-        <Legend color="bg-emerald-400" label="Low" />
+        <Legend
+          color="bg-orange-400"
+          label="High"
+        />
 
+        <Legend
+          color="bg-yellow-400"
+          label="Medium"
+        />
+
+        <Legend
+          color="bg-emerald-400"
+          label="Low"
+        />
       </div>
-
     </section>
   );
 }
+
+/* ==========================================================================
+   LEGEND
+   ========================================================================== */
 
 function Legend({
   color,
@@ -220,14 +616,30 @@ function Legend({
   label: string;
 }) {
   return (
-    <div className="flex items-center gap-2">
+    <div
+      className="
+        flex
+        items-center
+        gap-2
+      "
+    >
+      <span
+        className={`
+          h-2
+          w-2
+          rounded-full
+          ${color}
+        `}
+      />
 
-      <span className={`h-2 w-2 rounded-full ${color}`} />
-
-      <span className="text-[10px] text-[var(--muted)]">
+      <span
+        className="
+          text-[10px]
+          text-[var(--muted)]
+        "
+      >
         {label}
       </span>
-
     </div>
   );
 }

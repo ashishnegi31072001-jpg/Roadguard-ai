@@ -1,3 +1,4 @@
+
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
@@ -9,6 +10,11 @@ const Detection = require("../models/Detection");
 
 const router = express.Router();
 
+const AI_SERVICE_URL =
+  process.env.AI_SERVICE_URL || "http://127.0.0.1:8000";
+
+const MODEL_VERSION = "1.0.0";
+
 /*
 |--------------------------------------------------------------------------
 | GET ALL DETECTIONS
@@ -17,9 +23,9 @@ const router = express.Router();
 
 router.get("/", async (req, res) => {
   try {
-    const detections = await Detection.find().sort({
-      createdAt: -1,
-    });
+    const detections = await Detection.find()
+      .sort({ createdAt: -1 })
+      .lean();
 
     return res.status(200).json({
       success: true,
@@ -40,89 +46,57 @@ router.get("/", async (req, res) => {
 |--------------------------------------------------------------------------
 | ANALYZE IMAGE
 |--------------------------------------------------------------------------
+| POST /api/detections/analyze
 |
-| Frontend sends:
-|
+| Body:
 | {
-|   imageUrl: "/uploads/example.jpg",
-|   latitude: 30.306697,
-|   longitude: 77.949907
+|   "imageUrl": "/uploads/example.jpg",
+|   "latitude": 30.306697,
+|   "longitude": 77.949907
 | }
-|
-| Backend:
-|
-| 1. Finds uploaded image
-| 2. Sends image to Python AI service
-| 3. Receives YOLO detections
-| 4. Determines best detection
-| 5. Saves detection + GPS to MongoDB
-| 6. Returns result to frontend
-|
 |--------------------------------------------------------------------------
 */
 
 router.post("/analyze", async (req, res) => {
   try {
-    const {
-      imageUrl,
-      latitude,
-      longitude,
-    } = req.body;
+    const { imageUrl, latitude, longitude } = req.body || {};
 
-    /*
-    |--------------------------------------------------------------------------
-    | Validate Image URL
-    |--------------------------------------------------------------------------
-    */
-
-    if (!imageUrl) {
+    if (
+      typeof imageUrl !== "string" ||
+      !imageUrl.trim()
+    ) {
       return res.status(400).json({
         success: false,
-        message: "imageUrl is required",
+        message: "A valid imageUrl is required",
       });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Find Uploaded Image
-    |--------------------------------------------------------------------------
-    */
+    // Only allow files inside the backend uploads directory.
+    const filename = path.basename(imageUrl.trim());
 
-    const cleanPath = imageUrl.replace(/^[/\\]+/, "");
+    if (
+      !/^uploads[\\/]/i.test(imageUrl.trim()) &&
+      !imageUrl.trim().startsWith("/uploads/")
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "imageUrl must point to an uploaded file",
+      });
+    }
 
-    const imagePath = path.join(
-      __dirname,
-      "../../",
-      cleanPath
-    );
+    const uploadsDir = path.resolve(__dirname, "../../uploads");
+    const imagePath = path.resolve(uploadsDir, filename);
 
-    console.log("Image URL:", imageUrl);
-    console.log("Image path:", imagePath);
-
-    /*
-    |--------------------------------------------------------------------------
-    | Check Image Exists
-    |--------------------------------------------------------------------------
-    */
-
-    if (!fs.existsSync(imagePath)) {
-      console.error(
-        "Uploaded image not found:",
-        imagePath
-      );
-
+    if (
+      !imagePath.startsWith(uploadsDir + path.sep) ||
+      !fs.existsSync(imagePath) ||
+      !fs.statSync(imagePath).isFile()
+    ) {
       return res.status(404).json({
         success: false,
         message: "Uploaded image not found",
-        imageUrl,
       });
     }
-
-    /*
-    |--------------------------------------------------------------------------
-    | Prepare FormData
-    |--------------------------------------------------------------------------
-    */
 
     const formData = new FormData();
 
@@ -131,223 +105,188 @@ router.post("/analyze", async (req, res) => {
       fs.createReadStream(imagePath)
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | Send Image To Python AI Service
-    |--------------------------------------------------------------------------
-    */
-
-    console.log(
-      "Sending image to AI service..."
-    );
+    console.log("Sending image to AI service:", filename);
 
     const aiResponse = await axios.post(
-      "http://127.0.0.1:8000/detect",
+      `${AI_SERVICE_URL}/detect`,
       formData,
       {
-        headers: {
-          ...formData.getHeaders(),
-        },
-
+        headers: formData.getHeaders(),
         maxContentLength: Infinity,
         maxBodyLength: Infinity,
-
         timeout: 120000,
       }
     );
 
-    /*
-    |--------------------------------------------------------------------------
-    | AI Response
-    |--------------------------------------------------------------------------
-    */
-
     const aiData = aiResponse.data;
 
-    console.log(
-      "AI response:",
-      JSON.stringify(aiData, null, 2)
-    );
-
-    /*
-    |--------------------------------------------------------------------------
-    | Check AI Response
-    |--------------------------------------------------------------------------
-    */
-
-    if (!aiData || !aiData.success) {
-      return res.status(500).json({
+    if (
+      !aiData ||
+      aiData.success !== true ||
+      !Array.isArray(aiData.detections)
+    ) {
+      return res.status(502).json({
         success: false,
         message:
           aiData?.message ||
-          "AI detection failed",
+          "AI service returned an invalid response",
       });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Get Detections
-    |--------------------------------------------------------------------------
-    */
+    // Keep valid individual detections, not just the best one.
+    const validDetections = aiData.detections.filter(
+      (item) =>
+        item &&
+        typeof item.class === "string" &&
+        Number.isFinite(Number(item.confidence)) &&
+        Number(item.confidence) >= 0 &&
+        Number(item.confidence) <= 1
+    );
 
-    const detections =
-      aiData.detections || [];
-
-    /*
-    |--------------------------------------------------------------------------
-    | Determine Best Detection
-    |--------------------------------------------------------------------------
-    */
-
-    let damageType = "No Damage";
-    let confidence = 0;
-    let severity = "Low";
-
-    if (detections.length > 0) {
-      const bestDetection =
-        detections.reduce(
-          (best, current) => {
-            return current.confidence >
-              best.confidence
-              ? current
-              : best;
-          }
-        );
-
-      damageType =
-        bestDetection.class || "Unknown";
-
-      confidence =
-        Number(
-          bestDetection.confidence
-        ) || 0;
-
-      /*
-      |--------------------------------------------------------------------------
-      | Use AI Severity
-      |--------------------------------------------------------------------------
-      */
-
-      if (bestDetection.severity) {
-        severity =
-          bestDetection.severity;
-      } else {
-        /*
-        |--------------------------------------------------------------------------
-        | Fallback Severity
-        |--------------------------------------------------------------------------
-        */
-
-        if (confidence >= 0.85) {
-          severity = "High";
-        } else if (confidence >= 0.60) {
-          severity = "Medium";
-        } else {
-          severity = "Low";
-        }
+    const parseCoordinate = (value) => {
+      if (
+        value === null ||
+        value === undefined ||
+        value === ""
+      ) {
+        return null;
       }
+
+      const number = Number(value);
+
+      return Number.isFinite(number) ? number : NaN;
+    };
+
+    const parsedLatitude = parseCoordinate(latitude);
+    const parsedLongitude = parseCoordinate(longitude);
+
+    if (
+      (parsedLatitude !== null &&
+        (!Number.isFinite(parsedLatitude) ||
+          parsedLatitude < -90 ||
+          parsedLatitude > 90)) ||
+      (parsedLongitude !== null &&
+        (!Number.isFinite(parsedLongitude) ||
+          parsedLongitude < -180 ||
+          parsedLongitude > 180))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid GPS coordinates",
+      });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Prepare GPS Location
-    |--------------------------------------------------------------------------
-    */
+    const location = {
+      road: "Unknown Road",
+      area: "Unknown Area",
+      latitude: parsedLatitude,
+      longitude: parsedLongitude,
+    };
 
-    const parsedLatitude =
-      latitude !== null &&
-      latitude !== undefined &&
-      latitude !== ""
-        ? Number(latitude)
-        : null;
-
-    const parsedLongitude =
-      longitude !== null &&
-      longitude !== undefined &&
-      longitude !== ""
-        ? Number(longitude)
-        : null;
+    const imagePathForClient = `/uploads/${filename}`;
 
     /*
     |--------------------------------------------------------------------------
-    | Create Detection Document
+    | SAVE EACH DETECTED OBJECT
     |--------------------------------------------------------------------------
     */
 
-    const detection =
-      await Detection.create({
-        damageType,
-
-        severity,
-
-        confidence,
-
-        imageUrl,
-
-        location: {
-          road: "Unknown Road",
-
-          area: "Unknown Area",
-
-          latitude:
-            Number.isFinite(parsedLatitude)
-              ? parsedLatitude
-              : null,
-
-          longitude:
-            Number.isFinite(parsedLongitude)
-              ? parsedLongitude
-              : null,
-        },
-
+    if (validDetections.length === 0) {
+      const detection = await Detection.create({
+        damageType: "No Damage",
+        severity: "Low",
+        confidence: 0,
+        imageUrl: imagePathForClient,
+        location,
         aiModel: "YOLOv8",
-
-        modelVersion: "1.0.0",
-
-        status:
-          detections.length > 0
-            ? "Detected"
-            : "No Damage",
-
-        description:
-          detections.length > 0
-            ? `${damageType} detected by AI`
-            : "No road damage detected",
+        modelVersion: MODEL_VERSION,
+        status: "No Damage",
+        description: "No road damage detected by AI",
       });
 
-    /*
-    |--------------------------------------------------------------------------
-    | Successful Response
-    |--------------------------------------------------------------------------
-    */
+      return res.status(201).json({
+        success: true,
+        message: "Analysis completed; no damage detected",
+        detection,
+        ai: {
+          count: 0,
+          detections: [],
+        },
+      });
+    }
+
+    const documents = validDetections.map((item) => {
+      const confidence = Number(item.confidence);
+
+      let severity = item.severity;
+
+      if (
+        !["Low", "Medium", "High", "Critical"].includes(
+          severity
+        )
+      ) {
+        // Confidence is not the same as physical damage severity.
+        // These thresholds are provisional fallbacks only.
+        severity =
+          confidence >= 0.85
+            ? "High"
+            : confidence >= 0.60
+              ? "Medium"
+              : "Low";
+      }
+
+      return {
+        damageType: item.class,
+        severity,
+        confidence,
+        imageUrl: imagePathForClient,
+        location,
+        aiModel: "YOLOv8",
+        modelVersion: MODEL_VERSION,
+        status: "Detected",
+        description: `${item.class} detected by AI`,
+      };
+    });
+
+    const savedDetections = await Detection.insertMany(
+      documents,
+      { ordered: true }
+    );
+
+    const bestDetection = savedDetections.reduce(
+      (best, current) =>
+        current.confidence > best.confidence
+          ? current
+          : best
+    );
 
     return res.status(201).json({
       success: true,
-
-      message:
-        "Road analysis completed successfully",
-
-      detection,
-
+      message: "Road analysis completed successfully",
+      detection: bestDetection,
       ai: {
-        count:
-          aiData.count ||
-          detections.length,
-
-        detections,
+        count: validDetections.length,
+        detections: validDetections,
       },
+      savedCount: savedDetections.length,
     });
   } catch (error) {
-    /*
-    |--------------------------------------------------------------------------
-    | Error Handling
-    |--------------------------------------------------------------------------
-    */
+    console.error("AI analysis error:", error.message);
 
-    console.error(
-      "AI analysis error:",
-      error.message
-    );
+    if (error.code === "ECONNREFUSED") {
+      return res.status(503).json({
+        success: false,
+        message:
+          "AI service is not running. Start Python on port 8000.",
+      });
+    }
+
+    if (error.code === "ECONNABORTED") {
+      return res.status(504).json({
+        success: false,
+        message: "AI analysis timed out",
+      });
+    }
 
     if (error.response) {
       console.error(
@@ -356,30 +295,9 @@ router.post("/analyze", async (req, res) => {
       );
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | AI Service Not Running
-    |--------------------------------------------------------------------------
-    */
-
-    if (error.code === "ECONNREFUSED") {
-      return res.status(503).json({
-        success: false,
-        message:
-          "AI service is not running. Start the Python AI service on port 8000.",
-      });
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | General Error
-    |--------------------------------------------------------------------------
-    */
-
     return res.status(500).json({
       success: false,
       message: "AI analysis failed",
-      error: error.message,
     });
   }
 });
@@ -388,39 +306,25 @@ router.post("/analyze", async (req, res) => {
 |--------------------------------------------------------------------------
 | DELETE ALL DETECTIONS
 |--------------------------------------------------------------------------
-|
-| DELETE:
-| http://localhost:5000/api/detections
-|
+| DELETE /api/detections
 |--------------------------------------------------------------------------
 */
 
 router.delete("/", async (req, res) => {
   try {
-    const result =
-      await Detection.deleteMany({});
-
-    console.log(
-      `Deleted ${result.deletedCount} detections`
-    );
+    const result = await Detection.deleteMany({});
 
     return res.status(200).json({
       success: true,
-      message:
-        "All detections deleted successfully",
-      deletedCount:
-        result.deletedCount,
+      message: "All detections deleted successfully",
+      deletedCount: result.deletedCount,
     });
   } catch (error) {
-    console.error(
-      "Delete detections error:",
-      error
-    );
+    console.error("Delete all detections error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to delete detections",
+      message: "Failed to delete detections",
     });
   }
 });
@@ -429,22 +333,13 @@ router.delete("/", async (req, res) => {
 |--------------------------------------------------------------------------
 | DELETE SINGLE DETECTION
 |--------------------------------------------------------------------------
-|
-| DELETE:
-| http://localhost:5000/api/detections/:id
-|
+| DELETE /api/detections/:id
 |--------------------------------------------------------------------------
 */
 
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-
-    /*
-    |--------------------------------------------------------------------------
-    | Validate MongoDB ID
-    |--------------------------------------------------------------------------
-    */
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -453,20 +348,7 @@ router.delete("/:id", async (req, res) => {
       });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Find And Delete Detection
-    |--------------------------------------------------------------------------
-    */
-
-    const detection =
-      await Detection.findByIdAndDelete(id);
-
-    /*
-    |--------------------------------------------------------------------------
-    | Detection Not Found
-    |--------------------------------------------------------------------------
-    */
+    const detection = await Detection.findByIdAndDelete(id);
 
     if (!detection) {
       return res.status(404).json({
@@ -475,32 +357,17 @@ router.delete("/:id", async (req, res) => {
       });
     }
 
-    console.log(
-      `Deleted detection: ${id}`
-    );
-
-    /*
-    |--------------------------------------------------------------------------
-    | Success
-    |--------------------------------------------------------------------------
-    */
-
     return res.status(200).json({
       success: true,
-      message:
-        "Detection deleted successfully",
+      message: "Detection deleted successfully",
       detectionId: id,
     });
   } catch (error) {
-    console.error(
-      "Delete single detection error:",
-      error
-    );
+    console.error("Delete detection error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to delete detection",
+      message: "Failed to delete detection",
     });
   }
 });
@@ -509,17 +376,13 @@ router.delete("/:id", async (req, res) => {
 |--------------------------------------------------------------------------
 | GET SINGLE DETECTION
 |--------------------------------------------------------------------------
+| GET /api/detections/:id
+|--------------------------------------------------------------------------
 */
 
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-
-    /*
-    |--------------------------------------------------------------------------
-    | Validate MongoDB ID
-    |--------------------------------------------------------------------------
-    */
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -528,14 +391,7 @@ router.get("/:id", async (req, res) => {
       });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Find Detection
-    |--------------------------------------------------------------------------
-    */
-
-    const detection =
-      await Detection.findById(id);
+    const detection = await Detection.findById(id);
 
     if (!detection) {
       return res.status(404).json({
@@ -544,34 +400,18 @@ router.get("/:id", async (req, res) => {
       });
     }
 
-    /*
-    |--------------------------------------------------------------------------
-    | Success
-    |--------------------------------------------------------------------------
-    */
-
     return res.status(200).json({
       success: true,
       detection,
     });
   } catch (error) {
-    console.error(
-      "Get detection error:",
-      error
-    );
+    console.error("Get detection error:", error);
 
     return res.status(500).json({
       success: false,
-      message:
-        "Failed to fetch detection",
+      message: "Failed to fetch detection",
     });
   }
 });
-
-/*
-|--------------------------------------------------------------------------
-| EXPORT ROUTER
-|--------------------------------------------------------------------------
-*/
 
 module.exports = router;

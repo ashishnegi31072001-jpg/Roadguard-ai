@@ -1,3 +1,4 @@
+
 import { Routes, Route } from "react-router-dom";
 
 import Sidebar from "./components/layout/Sidebar";
@@ -9,8 +10,7 @@ import Detections from "./pages/Detections";
 import DetectionDetails from "./pages/DetectionDetails";
 import Analytics from "./pages/Analytics";
 import RoadMap from "./pages/RoadMap";
-
-
+import Reports from "./pages/Reports";
 
 function App() {
   return (
@@ -21,32 +21,39 @@ function App() {
         <Topbar />
 
         <main className="p-5 lg:p-7">
-         <Routes>
-  <Route path="/" element={<Dashboard />} />
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
 
-  <Route
-    path="/analyze"
-    element={<AnalyzeRoad />}
-  />
+            <Route
+              path="/analyze"
+              element={<AnalyzeRoad />}
+            />
 
-  <Route
-    path="/detections"
-    element={<Detections />}
-  />
+            <Route
+              path="/detections"
+              element={<Detections />}
+            />
 
-  <Route
-    path="/detections/:id"
-    element={<DetectionDetails />}
-  />
-  <Route
-  path="/analytics"
-  element={<Analytics />}
-/>
-<Route
-  path="/map"
-  element={<RoadMap />}
-/>
-</Routes>
+            <Route
+              path="/detections/:id"
+              element={<DetectionDetails />}
+            />
+
+            <Route
+              path="/analytics"
+              element={<Analytics />}
+            />
+
+            <Route
+              path="/map"
+              element={<RoadMap />}
+            />
+
+            <Route
+              path="/reports"
+              element={<Reports />}
+            />
+          </Routes>
         </main>
       </div>
     </div>
